@@ -20,15 +20,16 @@ def _get_model(plan: Any) -> AircraftModel:
     return plan.get("_model")
 
 
-def _simulate_plan(plan: Any) -> Tuple[float, float, List[float], bool]:
+def _simulate_plan(plan: Any) -> Tuple[float, float, List[float], List[float], bool]:
     """
-    Simulate plan with model's wind_nominal; return (total_time, total_energy, turn_angles, ok).
-    If model missing, return (0, 0, [], True).
+    Simulate plan with model's wind_nominal.
+    Return (total_time, total_energy, turn_angles, segment_times, ok).
+    If model missing, return (0, 0, [], [], True).
     """
     model = _get_model(plan)
     waypoints = _get_waypoints(plan)
     if not model or len(waypoints) < 2:
-        return 0.0, 0.0, [], True
+        return 0.0, 0.0, [], [], True
     initial = AircraftState(
         waypoints[0][0], waypoints[0][1], 0.0, 0.0, 0.0
     )
@@ -36,15 +37,14 @@ def _simulate_plan(plan: Any) -> Tuple[float, float, List[float], bool]:
         waypoints, initial, model.wind_nominal
     )
     turn_angles = []
+    segment_times = []
     for i in range(1, len(states)):
         turn = abs(
-            turn_angle_deg(
-                states[i - 1].heading_deg,
-                states[i].heading_deg if i < len(states) - 1 else states[i].heading_deg,
-            )
+            turn_angle_deg(states[i - 1].heading_deg, states[i].heading_deg)
         )
         turn_angles.append(turn)
-    return total_time, total_energy, turn_angles, True
+        segment_times.append(states[i].t - states[i - 1].t)
+    return total_time, total_energy, turn_angles, segment_times, True
 
 
 class EnduranceConstraint(Constraint):
@@ -58,14 +58,14 @@ class EnduranceConstraint(Constraint):
         waypoints = _get_waypoints(plan)
         if not model or len(waypoints) < 2:
             return True, 0.0
-        _, total_energy, _, _ = _simulate_plan(plan)
+        _, total_energy, _, _, _ = _simulate_plan(plan)
         if total_energy <= self.model.energy_budget:
             return True, 0.0
         return False, total_energy - self.model.energy_budget
 
 
 class ManeuverConstraint(Constraint):
-    """Turn rate (implied by turn angle per segment) must be within limit."""
+    """Turn rate (deg/s) per segment must be within limit."""
 
     def __init__(self, model: AircraftModel):
         self.model = model
@@ -75,11 +75,14 @@ class ManeuverConstraint(Constraint):
         waypoints = _get_waypoints(plan)
         if not model or len(waypoints) < 2:
             return True, 0.0
-        _, _, turn_angles, _ = _simulate_plan(plan)
-        max_turn = model.max_turn_rate_degs
-        for ta in turn_angles:
-            if ta > max_turn * 360:  # allow one full turn per segment as upper bound
-                return False, ta - model.max_turn_rate_degs
+        _, _, turn_angles, segment_times, _ = _simulate_plan(plan)
+        max_rate = model.max_turn_rate_degs
+        for ta, dt in zip(turn_angles, segment_times):
+            if dt < 1e-9:
+                continue
+            rate = ta / dt
+            if rate > max_rate:
+                return False, rate - max_rate
         return True, 0.0
 
 
