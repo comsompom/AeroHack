@@ -85,7 +85,7 @@ def run_spacecraft():
 def main():
     print("Running aircraft mission...")
     run_aircraft()
-    print("Running spacecraft mission (stub)...")
+    print("Running spacecraft mission...")
     run_spacecraft()
     print("Done. Check outputs/")
 

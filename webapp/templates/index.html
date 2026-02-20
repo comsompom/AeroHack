@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DroneMission — Mission Visualization</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 1rem; background: #0f1419; color: #e6edf3; }
+    h1 { font-size: 1.5rem; }
+    .tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+    .tabs button { padding: 0.5rem 1rem; cursor: pointer; background: #21262d; border: 1px solid #30363d; color: #e6edf3; border-radius: 6px; }
+    .tabs button.active { background: #238636; border-color: #238636; }
+    .panel { display: none; padding: 1rem; background: #161b22; border-radius: 8px; border: 1px solid #30363d; }
+    .panel.active { display: block; }
+    .metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 0.75rem; margin-bottom: 1rem; }
+    .metric { padding: 0.5rem; background: #21262d; border-radius: 6px; }
+    .metric span { display: block; font-size: 0.75rem; color: #8b949e; }
+    .metric strong { font-size: 1.1rem; }
+    pre { overflow: auto; font-size: 0.85rem; padding: 1rem; background: #0d1117; border-radius: 6px; }
+    .error { color: #f85149; }
+  </style>
+</head>
+<body>
+  <h1>DroneMission — Mission Visualization</h1>
+  <p>Unified aircraft + spacecraft mission planning (AeroHack).</p>
+
+  <div class="tabs">
+    <button type="button" class="tab active" data-panel="aircraft">Aircraft mission</button>
+    <button type="button" class="tab" data-panel="spacecraft">Spacecraft mission</button>
+  </div>
+
+  <div id="aircraft" class="panel active">
+    <h2>Aircraft mission</h2>
+    <div id="aircraft-metrics" class="metrics"></div>
+    <div id="aircraft-route"></div>
+  </div>
+
+  <div id="spacecraft" class="panel">
+    <h2>Spacecraft mission (7-day)</h2>
+    <div id="spacecraft-metrics" class="metrics"></div>
+    <div id="spacecraft-schedule"></div>
+  </div>
+
+  <script>
+    const tabs = document.querySelectorAll('.tab');
+    const panels = document.querySelectorAll('.panel');
+    tabs.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.panel;
+        tabs.forEach(b => b.classList.remove('active'));
+        panels.forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById(id).classList.add('active');
+      });
+    });
+
+    async function loadAircraft() {
+      const el = document.getElementById('aircraft-route');
+      const metrics = document.getElementById('aircraft-metrics');
+      try {
+        const r = await fetch('/api/aircraft');
+        if (!r.ok) {
+          el.innerHTML = '<p class="error">' + (await r.json()).error + '</p>';
+          return;
+        }
+        const d = await r.json();
+        metrics.innerHTML = [
+          '<div class="metric"><span>Total time</span><strong>' + (d.total_time_s != null ? d.total_time_s.toFixed(1) + ' s' : '—') + '</strong></div>',
+          '<div class="metric"><span>Total energy</span><strong>' + (d.total_energy != null ? d.total_energy.toFixed(0) : '—') + '</strong></div>',
+          '<div class="metric"><span>Monte-Carlo success</span><strong>' + (d.monte_carlo && d.monte_carlo.success_rate != null ? (d.monte_carlo.success_rate * 100).toFixed(0) + '%' : '—') + '</strong></div>'
+        ].join('');
+        el.innerHTML = '<pre>' + JSON.stringify(d.planned_route || d.waypoints || [], null, 2) + '</pre>';
+      } catch (e) {
+        el.innerHTML = '<p class="error">Failed to load aircraft data.</p>';
+      }
+    }
+
+    async function loadSpacecraft() {
+      const el = document.getElementById('spacecraft-schedule');
+      const metrics = document.getElementById('spacecraft-metrics');
+      try {
+        const r = await fetch('/api/spacecraft');
+        if (!r.ok) {
+          el.innerHTML = '<p class="error">' + (await r.json()).error + '</p>';
+          return;
+        }
+        const d = await r.json();
+        metrics.innerHTML = [
+          '<div class="metric"><span>Mission value</span><strong>' + (d.mission_value != null ? d.mission_value : '—') + '</strong></div>',
+          '<div class="metric"><span>Schedule days</span><strong>' + (d.schedule_days != null ? d.schedule_days : '—') + '</strong></div>',
+          '<div class="metric"><span>Activities</span><strong>' + (d.activities ? d.activities.length : 0) + '</strong></div>'
+        ].join('');
+        el.innerHTML = '<pre>' + JSON.stringify(d.activities || [], null, 2) + '</pre>';
+      } catch (e) {
+        el.innerHTML = '<p class="error">Failed to load spacecraft data.</p>';
+      }
+    }
+
+    loadAircraft();
+    loadSpacecraft();
+  </script>
+</body>
+</html>
