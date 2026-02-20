@@ -1,0 +1,12 @@
+# DroneMission — AeroHack unified mission planning
+# Python 3.8+
+
+# Core / planning
+numpy>=1.20
+
+# Testing
+pytest>=7.0
+pytest-cov>=4.0
+
+# Web app (optional for planning-only runs)
+flask>=2.0
