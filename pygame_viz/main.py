@@ -5,6 +5,7 @@ Run from project root with PYTHONPATH set: python pygame_viz/main.py
 import os
 import sys
 import time
+import threading
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -26,6 +27,8 @@ WIN_W = MAP_WIDTH + PANEL_WIDTH
 WIN_H = 700
 FPS = 60
 FONT_SIZE = 18
+MAX_PANEL_CONTENT_HEIGHT = 6000  # scrollable panel content
+SCROLL_STEP = 40
 
 
 def main():
@@ -52,7 +55,7 @@ def main():
     custom_size = 10.0
     mission_plan = None
     mission_start_time = None
-    flight_speed = 1.0  # time multiplier
+    flight_speed = 40.0  # replay speed (1 sec real = 40 sec mission) so plane movement is visible
     waypoint_elevations = []
     waypoint_weather = []
     aircraft_result = None  # full output (constraint_checks, monte_carlo) after run + save
@@ -61,6 +64,10 @@ def main():
     viz_mode = 0  # 0=Aircraft, 1=Spacecraft, 2=Run full
     station_lat, station_lon = 52.0, 4.0  # ground station for spacecraft
     dropdown_open = None  # None | "drone_type" | "weight" | "size" | "plane_type" | "plane_model"
+    panel_scroll_y = 0  # scroll offset for left settings panel
+    panel_content_height = WIN_H  # set by draw_panel
+    save_in_progress = False  # True while background thread is saving mission
+    mission_saved_message = ""  # "Mission created and saved. ..." after save completes
 
     # Dropdown option values (weight kg, size m, altitude m)
     WEIGHT_OPTS = [1, 5, 10, 25, 50, 100, 500, 1100, 2200, 11600, 79000]
@@ -73,8 +80,8 @@ def main():
     def map_rect():
         return pygame.Rect(PANEL_WIDTH, 0, map_width, win_h)
 
-    def draw_panel():
-        surf = screen.subsurface(panel_rect())
+    def draw_panel(surf):
+        """Draw panel content to surf (content space). Returns (buttons, content_height). Buttons use content-space coords."""
         surf.fill((40, 42, 46))
         buttons = []
         y = 10
@@ -132,7 +139,7 @@ def main():
                 n = len(spacecraft_result.get("activities", []))
                 t = font.render(f"Activities: {n} (saved to outputs/)", True, (150, 200, 150))
                 surf.blit(t, (10, y))
-            return buttons
+            return (buttons, y + 20)
 
         if viz_mode == 2:
             # --- Run full pipeline panel ---
@@ -156,7 +163,7 @@ def main():
                     t = font.render(line[:38], True, (180, 220, 180))
                     surf.blit(t, (10, y))
                     y += 18
-            return buttons
+            return (buttons, y + 20)
 
         # --- Aircraft panel ---
         t = font.render("Aircraft mission", True, (230, 230, 230))
@@ -176,13 +183,13 @@ def main():
         t = font.render(f"Waypoints ({len(waypoints)}):", True, (180, 180, 180))
         surf.blit(t, (10, y))
         y += 22
-        for i, wp in enumerate(waypoints[:8]):
+        for i, wp in enumerate(waypoints[:30]):
             alt = wp[2] if len(wp) >= 3 else default_altitude_m
             t = font.render(f"  {i+1}. {wp[0]:.4f}, {wp[1]:.4f} @ {alt:.0f}m", True, (200, 200, 200))
             surf.blit(t, (10, y))
             y += 18
-        if len(waypoints) > 8:
-            t = font.render(f"  ... +{len(waypoints)-8} more", True, (150, 150, 150))
+        if len(waypoints) > 30:
+            t = font.render(f"  ... +{len(waypoints)-30} more", True, (150, 150, 150))
             surf.blit(t, (10, y))
             y += 18
         y += 8
@@ -317,14 +324,25 @@ def main():
         y += 10
         # Start mission
         b_go = pygame.Rect(10, y, 180, 36)
-        if mission_plan is None:
+        if mission_plan is None and not save_in_progress:
             pygame.draw.rect(surf, (0, 150, 80), b_go)
             t = font.render("Start mission", True, (255, 255, 255))
+        elif save_in_progress:
+            pygame.draw.rect(surf, (100, 100, 60), b_go)
+            t = font.render("Saving...", True, (220, 220, 180))
         else:
             pygame.draw.rect(surf, (80, 80, 80), b_go)
-            t = font.render("Mission running...", True, (200, 200, 200))
+            t = font.render("Mission running", True, (200, 200, 200))
         surf.blit(t, (b_go.x + 20, b_go.y + 10))
         buttons.append(("start_mission", b_go))
+        y += 44
+        # Mission created and saved message (prominent)
+        if mission_saved_message:
+            for line in mission_saved_message.split("\n")[:4]:
+                t = font.render(line[:42], True, (150, 255, 150))
+                surf.blit(t, (10, y))
+                y += 18
+            y += 8
         if waypoint_elevations and waypoints:
             y += 44
             e0 = waypoint_elevations[0]
@@ -356,7 +374,7 @@ def main():
             y += 18
             t = font.render("Saved: outputs/aircraft_mission.json", True, (150, 200, 150))
             surf.blit(t, (10, y))
-        return buttons
+        return (buttons, y + 24)
 
     def global_buttons(buttons_list, panel_y_offset=0):
         """Convert panel-relative buttons to screen coords (panel on left at x=0)."""
@@ -403,8 +421,10 @@ def main():
                             else:
                                 waypoints.append((lat, lon, default_altitude_m))
                     elif x < PANEL_WIDTH:
-                        for name, r in global_buttons(buttons, 0):
-                            if r.collidepoint(x, y):
+                        # Panel: buttons are in content-space; click (x,y) is screen, so content y = y + panel_scroll_y
+                        content_y = y + panel_scroll_y
+                        for name, r in buttons:
+                            if r.collidepoint(x, content_y):
                                 if name == "tab_0":
                                     viz_mode = 0
                                     dropdown_open = None
@@ -480,7 +500,7 @@ def main():
                                 elif name.startswith("choice_altitude_"):
                                     default_altitude_m = ALTITUDE_OPTS[int(name.split("_")[-1])]
                                     dropdown_open = None
-                                elif name == "start_mission" and mission_plan is None and len(waypoints) >= 2:
+                                elif name == "start_mission" and mission_plan is None and not save_in_progress and len(waypoints) >= 2:
                                     dropdown_open = None
                                     cfg = DroneConfig(
                                         drone_type=DRONE_TYPES[drone_type_idx],
@@ -495,40 +515,71 @@ def main():
                                     params["min_altitude_m"] = 0.0
                                     params["max_altitude_m"] = 4000.0
                                     params["default_altitude_m"] = default_altitude_m
-                                    # Ensure waypoints are (lat, lon, alt_m)
                                     wps_for_mission = [(wp[0], wp[1], wp[2] if len(wp) >= 3 else default_altitude_m) for wp in waypoints]
-                                    mission_plan = run_mission(wps_for_mission, params)
+                                    # Run plan first so plane can move immediately; save in background
+                                    mission_plan = run_mission(wps_for_mission, params, use_user_order=True)
                                     if mission_plan:
-                                        try:
-                                            waypoint_elevations = get_elevations_bulk([(wp[0], wp[1]) for wp in waypoints])
-                                            waypoint_weather = get_weather_for_waypoints([(wp[0], wp[1]) for wp in waypoints])
-                                        except Exception:
-                                            waypoint_elevations = []
-                                            waypoint_weather = []
-                                        aircraft_result = run_aircraft_to_outputs(wps_for_mission, params, save=True)
-                                        mission_start_time = time.time()  # Start replay after blocking calls so plane animates from start
+                                        mission_start_time = time.time()
+                                        save_in_progress = True
+                                        mission_saved_message = ""
+                                        wps_copy = list(wps_for_mission)
+                                        params_copy = dict(params)
+
+                                        def save_mission_background():
+                                            nonlocal aircraft_result, waypoint_elevations, waypoint_weather, save_in_progress, mission_saved_message
+                                            try:
+                                                el = get_elevations_bulk([(wp[0], wp[1]) for wp in wps_copy])
+                                                wth = get_weather_for_waypoints([(wp[0], wp[1]) for wp in wps_copy])
+                                                waypoint_elevations.clear()
+                                                waypoint_elevations.extend(el)
+                                                waypoint_weather.clear()
+                                                waypoint_weather.extend(wth)
+                                            except Exception:
+                                                waypoint_elevations.clear()
+                                                waypoint_weather.clear()
+                                            aircraft_result = run_aircraft_to_outputs(wps_copy, params_copy, save=True)
+                                            save_in_progress = False
+                                            mission_saved_message = (
+                                                "Mission created and saved.\n"
+                                                "outputs/aircraft_mission.json\n"
+                                                "outputs/aircraft_mission_plot.png\n"
+                                                f"Waypoints: {len(wps_copy)}, Alt: {params_copy.get('default_altitude_m', 100):.0f}m, {DRONE_TYPES[drone_type_idx]}"
+                                            )
+                                        threading.Thread(target=save_mission_background, daemon=True).start()
                                     else:
                                         mission_plan = {}
                                         aircraft_result = None
                                 break
-                elif e.button == 4 and PANEL_WIDTH <= x < PANEL_WIDTH + map_width:
-                    map_view.zoom_in()
-                elif e.button == 5 and PANEL_WIDTH <= x < PANEL_WIDTH + map_width:
-                    map_view.zoom_out()
-            # Left mouse button: hold and drag to pan the map (grab and move)
-            if e.type == pygame.MOUSEMOTION and e.buttons[0] and PANEL_WIDTH <= e.pos[0] < PANEL_WIDTH + map_width:
-                map_view.pan(-e.rel[0], -e.rel[1])
+                elif e.button == 4:
+                    if x < PANEL_WIDTH:
+                        panel_scroll_y = max(0, panel_scroll_y - SCROLL_STEP)
+                    elif PANEL_WIDTH <= x < PANEL_WIDTH + map_width:
+                        map_view.zoom_in()
+                elif e.button == 5:
+                    if x < PANEL_WIDTH:
+                        panel_scroll_y = min(max(0, panel_content_height - win_h), panel_scroll_y + SCROLL_STEP)
+                    elif PANEL_WIDTH <= x < PANEL_WIDTH + map_width:
+                        map_view.zoom_out()
+            # Left or right mouse button: hold and drag to pan the map
+            if e.type == pygame.MOUSEMOTION and PANEL_WIDTH <= e.pos[0] < PANEL_WIDTH + map_width:
+                if e.buttons[0] or e.buttons[2]:  # left or right button drag
+                    map_view.pan(-e.rel[0], -e.rel[1])
 
-        # Update flight position for replay
+        # Update flight position for replay (plane moves along planned route)
         if mission_plan and mission_start_time is not None and mission_plan.get("timestamps"):
             elapsed = (time.time() - mission_start_time) * flight_speed
             total_t = mission_plan["timestamps"][-1]
-            if elapsed >= total_t:
+            if total_t <= 0:
+                current_flight_pos = (mission_plan["waypoints"][0][0], mission_plan["waypoints"][0][1]) if mission_plan.get("waypoints") else None
+                current_flight_idx = 0
+            elif elapsed >= total_t:
                 current_flight_pos = (mission_plan["waypoints"][-1][0], mission_plan["waypoints"][-1][1])
                 current_flight_idx = len(mission_plan["waypoints"]) - 1
             else:
                 current_flight_pos = interpolate_position(mission_plan, elapsed)
                 current_flight_idx = -1
+            if current_flight_pos is None and mission_plan.get("waypoints"):
+                current_flight_pos = (mission_plan["waypoints"][0][0], mission_plan["waypoints"][0][1])
         else:
             current_flight_pos = None
             current_flight_idx = -1
@@ -540,16 +591,32 @@ def main():
         map_surf.fill((30, 30, 30))
         map_view.draw(map_surf)
         all_wps = waypoints if waypoints else []
+        # Always show user waypoints (so they never disappear). When mission running, show planned path and plane.
         if mission_plan and mission_plan.get("waypoints"):
-            map_view.draw_waypoints(map_surf, mission_plan["waypoints"], start_idx=0, current_idx=current_flight_idx)
+            map_view.draw_path_line(map_surf, mission_plan["waypoints"])
+            map_view.draw_waypoint_markers(map_surf, all_wps, start_idx=0, current_idx=-1)
         else:
             map_view.draw_waypoints(map_surf, all_wps, start_idx=0, current_idx=-1)
         if current_flight_pos:
             pt = map_view.lat_lon_to_screen(current_flight_pos[0], current_flight_pos[1])
             pygame.draw.circle(map_surf, (255, 200, 0), pt, 12)
             pygame.draw.circle(map_surf, (255, 255, 255), pt, 12, 3)
-        # Panel (left side)
-        buttons = draw_panel()
+        # Panel (left side): draw to tall surface, then blit visible region with scroll
+        panel_content_surf = pygame.Surface((PANEL_WIDTH, MAX_PANEL_CONTENT_HEIGHT))
+        buttons, panel_content_height = draw_panel(panel_content_surf)
+        panel_scroll_y = max(0, min(panel_scroll_y, max(0, panel_content_height - win_h)))
+        panel_visible = screen.subsurface(panel_rect())
+        panel_visible.fill((40, 42, 46))
+        if panel_content_height <= win_h:
+            panel_visible.blit(panel_content_surf.subsurface((0, 0, PANEL_WIDTH, panel_content_height)), (0, 0))
+        else:
+            panel_visible.blit(panel_content_surf, (0, 0), (0, panel_scroll_y, PANEL_WIDTH, win_h))
+            # Scrollbar
+            sb_x = PANEL_WIDTH - 8
+            thumb_h = max(24, int(win_h * win_h / panel_content_height))
+            thumb_y = int((panel_scroll_y / max(1, panel_content_height - win_h)) * (win_h - thumb_h))
+            pygame.draw.rect(panel_visible, (60, 62, 66), (sb_x, 0, 6, win_h))
+            pygame.draw.rect(panel_visible, (100, 104, 108), (sb_x, thumb_y, 6, thumb_h))
         pygame.display.flip()
         clock.tick(FPS)
 

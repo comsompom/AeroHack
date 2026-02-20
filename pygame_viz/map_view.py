@@ -81,6 +81,8 @@ def fetch_tile(z: int, x: int, y: int) -> pygame.Surface | None:
 class MapView:
     """Pygame map: OSM tiles, zoom, pan, draw waypoints and drone."""
 
+    MAX_LOAD_PER_FRAME = 2  # load at most this many tiles per draw to keep UI responsive
+
     def __init__(self, width: int, height: int):
         self.width = width
         self.height = height
@@ -89,7 +91,7 @@ class MapView:
         self.zoom = 6
         self.screen_center = (width // 2, height // 2)
         self._tile_cache = {}
-        self._load_queue = []
+        self._load_queue = []  # list of (z, x, y) to load; we load a few per frame
 
     def pan(self, dx_px: float, dy_px: float):
         """Pan map by dx_px, dy_px (screen pixels)."""
@@ -133,33 +135,51 @@ class MapView:
 
     def draw(self, surface: pygame.Surface):
         cx_t, cy_t = lat_lon_to_tile(self.center_lat, self.center_lon, self.zoom)
-        for (z, tx, ty) in self._tiles_visible():
+        visible = list(self._tiles_visible())
+        # Queue visible tiles that aren't cached (avoid blocking: don't fetch all in one frame)
+        for (z, tx, ty) in visible:
             key = (z, tx, ty)
-            if key not in self._tile_cache:
-                tile = fetch_tile(z, tx, ty)
-                if tile:
-                    self._tile_cache[key] = tile
-                else:
-                    surface.fill((60, 60, 60), (
-                        int(self.screen_center[0] + (tx - cx_t) * TILE_SIZE),
-                        int(self.screen_center[1] + (ty - cy_t) * TILE_SIZE),
-                        TILE_SIZE, TILE_SIZE
-                    ))
-                    continue
-            tile = self._tile_cache[key]
-            sx = self.screen_center[0] + (tx - cx_t) * TILE_SIZE
-            sy = self.screen_center[1] + (ty - cy_t) * TILE_SIZE
-            surface.blit(tile, (sx, sy))
+            if key not in self._tile_cache and key not in self._load_queue:
+                self._load_queue.append(key)
+        self._load_queue = self._load_queue[:40]  # cap queue size
+        # Load at most MAX_LOAD_PER_FRAME tiles this frame (keeps map responsive)
+        for _ in range(self.MAX_LOAD_PER_FRAME):
+            if not self._load_queue:
+                break
+            z, tx, ty = self._load_queue.pop(0)
+            key = (z, tx, ty)
+            if key in self._tile_cache:
+                continue
+            tile = fetch_tile(z, tx, ty)
+            if tile:
+                self._tile_cache[key] = tile
+        # Draw: use cache or gray placeholder
+        for (z, tx, ty) in visible:
+            key = (z, tx, ty)
+            sx = int(self.screen_center[0] + (tx - cx_t) * TILE_SIZE)
+            sy = int(self.screen_center[1] + (ty - cy_t) * TILE_SIZE)
+            if key in self._tile_cache:
+                surface.blit(self._tile_cache[key], (sx, sy))
+            else:
+                surface.fill((60, 60, 60), (sx, sy, TILE_SIZE, TILE_SIZE))
 
-    def draw_waypoints(self, surface: pygame.Surface, waypoints: list, start_idx: int = 0, current_idx: int = -1):
-        """Draw waypoint markers. start_idx = which is start; current_idx = current in flight (-1 = none)."""
-        def get_lat_lon(wp):
-            if isinstance(wp, (list, tuple)):
-                return wp[0], wp[1]
-            return wp.get("lat", 0), wp.get("lon", 0)
+    def _get_lat_lon(self, wp):
+        if isinstance(wp, (list, tuple)):
+            return wp[0], wp[1]
+        return wp.get("lat", 0), wp.get("lon", 0)
 
+    def draw_path_line(self, surface: pygame.Surface, waypoints: list):
+        """Draw only the path line (no markers). Waypoints in (lat, lon) or (lat, lon, alt) form."""
+        if len(waypoints) < 2:
+            return
+        pts = [self.lat_lon_to_screen(*self._get_lat_lon(wp)) for wp in waypoints]
+        for j in range(len(pts) - 1):
+            pygame.draw.line(surface, (100, 100, 255), pts[j], pts[j + 1], 2)
+
+    def draw_waypoint_markers(self, surface: pygame.Surface, waypoints: list, start_idx: int = 0, current_idx: int = -1):
+        """Draw only waypoint circles (no line). start_idx = green, current_idx = yellow, else blue."""
         for i, wp in enumerate(waypoints):
-            lat, lon = get_lat_lon(wp)
+            lat, lon = self._get_lat_lon(wp)
             pt = self.lat_lon_to_screen(lat, lon)
             if not (0 <= pt[0] < self.width and 0 <= pt[1] < self.height):
                 continue
@@ -171,7 +191,8 @@ class MapView:
                 color = (50, 150, 255)
             pygame.draw.circle(surface, color, pt, 8)
             pygame.draw.circle(surface, (255, 255, 255), pt, 8, 2)
-        if len(waypoints) >= 2:
-            pts = [self.lat_lon_to_screen(*get_lat_lon(wp)) for wp in waypoints]
-            for j in range(len(pts) - 1):
-                pygame.draw.line(surface, (100, 100, 255), pts[j], pts[j + 1], 2)
+
+    def draw_waypoints(self, surface: pygame.Surface, waypoints: list, start_idx: int = 0, current_idx: int = -1):
+        """Draw waypoint markers and path line. start_idx = which is start; current_idx = current in flight (-1 = none)."""
+        self.draw_waypoint_markers(surface, waypoints, start_idx, current_idx)
+        self.draw_path_line(surface, waypoints)
