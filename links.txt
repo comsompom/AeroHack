@@ -1,0 +1,4 @@
+run all by one script - https://www.youtube.com/watch?v=mzqaNO4y6F0
+visual windows application for aircraft - https://www.youtube.com/watch?v=889_qulNOkQ
+visual windows application for spacecraft - https://www.youtube.com/watch?v=dev1-GU53bU
+flask application for visualization - https://www.youtube.com/watch?v=RL4tNtopXyQ

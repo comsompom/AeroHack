@@ -2,6 +2,12 @@
 
 Unified mission planning and simulation framework for **aircraft** (UAV/fixed-wing) and **spacecraft** (CubeSat-style LEO). Both use the same core planning concept: decision variables, constraints, objective, and a single solver.
 
+**Videos**
+- [Run all by one script](https://www.youtube.com/watch?v=mzqaNO4y6F0) — Full pipeline (aircraft + spacecraft) from a single command.
+- [Visual Windows application for aircraft](https://www.youtube.com/watch?v=889_qulNOkQ) — Pygame mission viz: map, waypoints, run mission, replay.
+- [Visual Windows application for spacecraft](https://www.youtube.com/watch?v=dev1-GU53bU) — Pygame spacecraft view: globe, launch point, orbit, 7-day plan.
+- [Flask application for visualization](https://www.youtube.com/watch?v=RL4tNtopXyQ) — Web app at http://127.0.0.1:5000: aircraft and spacecraft tabs, APIs, map.
+
 ---
 
 ## Functionality overview
