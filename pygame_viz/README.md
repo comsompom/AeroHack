@@ -1,17 +1,22 @@
 # Pygame mission visualization
 
-Separate Python/Pygame window for mission setup and real-time flight on a real-world map.
+Separate Python/Pygame window with **the same functionality as the main project**: aircraft mission (plan, simulate, save to outputs/, constraint checks, Monte-Carlo) and spacecraft 7-day mission (plan, save, constraint checks), plus real-time flight on a map.
 
-## Features
+## Modes (tabs)
+
+- **Aircraft:** Plan aircraft mission from waypoints, run planner + simulation, save to `outputs/aircraft_mission.json` and `aircraft_mission_plot.png`, see constraint checks and Monte-Carlo success rate; real-time flight replay on map.
+- **Spacecraft:** Use current waypoints as observation targets; plan 7-day schedule (observations + downlinks), save to `outputs/spacecraft_mission.json` and `spacecraft_schedule.csv`, see mission value and constraint checks (slew, power).
+- **Run full:** Run both aircraft and spacecraft pipeline (same as `python -m src.run_all`); saves all outputs to `outputs/`.
+
+## Features (Aircraft)
 
 - **Real-world map:** OSM tiles, zoom (scroll wheel), pan (drag).
 - **Start & waypoints:** Set start by clicking map or add waypoints by clicking. Clear and redo. Last waypoint = end of mission.
-- **Elevation:** Fetched per waypoint via Open-Elevation API when you start the mission. ArduPilot terrain data from [terrain.ardupilot.org/continentsdat3/](https://terrain.ardupilot.org/continentsdat3/) can be used offline by adding a local loader for unpacked continent grids.
-- **Real-time weather:** Open-Meteo (no API key) for each waypoint when mission starts; shown in panel.
+- **Elevation:** Fetched per waypoint via Open-Elevation API when you start the mission. ArduPilot terrain from [terrain.ardupilot.org/continentsdat3/](https://terrain.ardupilot.org/continentsdat3/) can be used offline with a local loader.
+- **Real-time weather:** Open-Meteo (no API key) per waypoint; shown in panel.
 - **Drone type:** UAV, Plane, Spacecraft, Quadcopter.
-- **Weight (kg) and size (m):** Adjust with [-] / [+] or choose a predefined plane model.
-- **Plane models:** War (e.g. MQ-9 Reaper, Global Hawk) and Civil (e.g. Cessna 172, DJI Agras); predefined list or custom weight/size.
-- **Start mission:** Runs the aircraft planner on your waypoints and replays the path in real time on the map (yellow marker).
+- **Weight (kg) and size (m):** [-] / [+] or predefined plane model (War / Civil).
+- **Start mission:** Runs planner, saves to `outputs/`, shows constraint checks and Monte-Carlo; yellow marker replays path on map.
 
 ## Run (Windows or macOS)
 

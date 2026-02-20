@@ -13,10 +13,11 @@ if ROOT not in sys.path:
 import pygame
 
 from pygame_viz.map_view import MapView, TILE_SIZE
-from pygame_viz.elevation import get_elevation, get_elevations_bulk
+from pygame_viz.elevation import get_elevations_bulk
 from pygame_viz.weather import get_weather_for_waypoints
 from pygame_viz.config import DRONE_TYPES, PLANE_MODELS_WAR, PLANE_MODELS_CIVIL, DroneConfig
 from pygame_viz.mission_runner import run_mission, interpolate_position
+from pygame_viz.pipeline import run_aircraft_to_outputs, run_spacecraft_to_outputs, run_full_pipeline
 
 # Layout
 MAP_WIDTH = 900
@@ -29,12 +30,15 @@ FONT_SIZE = 18
 
 def main():
     pygame.init()
-    screen = pygame.display.set_mode((WIN_W, WIN_H), pygame.RESIZABLE)
+    # Use locals for current size so resize can update them without UnboundLocalError
+    map_width = MAP_WIDTH
+    win_h = WIN_H
+    screen = pygame.display.set_mode((map_width + PANEL_WIDTH, win_h), pygame.RESIZABLE)
     pygame.display.set_caption("DroneMission — Pygame Viz")
     font = pygame.font.Font(None, FONT_SIZE)
     clock = pygame.time.Clock()
 
-    map_view = MapView(MAP_WIDTH, WIN_H)
+    map_view = MapView(map_width, win_h)
     waypoints = []
     start_lat, start_lon = None, None
     mode = "add_waypoint"  # add_waypoint | set_start | idle
@@ -50,16 +54,102 @@ def main():
     flight_speed = 1.0  # time multiplier
     waypoint_elevations = []
     waypoint_weather = []
+    aircraft_result = None  # full output (constraint_checks, monte_carlo) after run + save
+    spacecraft_result = None  # 7-day schedule result
+    pipeline_message = ""  # "Run full" status
+    viz_mode = 0  # 0=Aircraft, 1=Spacecraft, 2=Run full
+    station_lat, station_lon = 52.0, 4.0  # ground station for spacecraft
 
     def panel_rect():
-        return pygame.Rect(MAP_WIDTH, 0, PANEL_WIDTH, WIN_H)
+        return pygame.Rect(map_width, 0, PANEL_WIDTH, win_h)
 
     def draw_panel():
         surf = screen.subsurface(panel_rect())
         surf.fill((40, 42, 46))
+        buttons = []
         y = 10
-        # Title
-        t = font.render("Mission setup", True, (230, 230, 230))
+        # Mode tabs: Aircraft | Spacecraft | Run full
+        tab_w = 95
+        tabs = [
+            ("Aircraft", 0),
+            ("Spacecraft", 1),
+            ("Run full", 2),
+        ]
+        for i, (label, idx) in enumerate(tabs):
+            rx = 10 + i * (tab_w + 4)
+            r = pygame.Rect(rx, y, tab_w, 26)
+            col = (0, 120, 80) if viz_mode == idx else (60, 60, 65)
+            pygame.draw.rect(surf, col, r)
+            t = font.render(label, True, (255, 255, 255))
+            surf.blit(t, (rx + 6, y + 5))
+            buttons.append((f"tab_{idx}", r))
+        y += 32
+
+        if viz_mode == 1:
+            # --- Spacecraft panel ---
+            t = font.render("7-day spacecraft mission", True, (230, 230, 230))
+            surf.blit(t, (10, y))
+            y += 24
+            t = font.render("Targets (from waypoints):", True, (180, 180, 180))
+            surf.blit(t, (10, y))
+            y += 20
+            tgt = [(wp[0], wp[1], 1.0) for wp in waypoints] if waypoints else [(52.5, 4.5, 1.0), (53.0, 5.0, 1.0)]
+            for i, (lat, lon, v) in enumerate(tgt[:4]):
+                t = font.render(f"  {lat:.2f}, {lon:.2f}", True, (200, 200, 200))
+                surf.blit(t, (10, y))
+                y += 18
+            y += 6
+            t = font.render(f"Station: {station_lat:.2f}, {station_lon:.2f}", True, (180, 180, 180))
+            surf.blit(t, (10, y))
+            y += 24
+            b_plan = pygame.Rect(10, y, 160, 30)
+            pygame.draw.rect(surf, (80, 60, 120), b_plan)
+            t = font.render("Plan 7-day + Save", True, (255, 255, 255))
+            surf.blit(t, (b_plan.x + 20, b_plan.y + 8))
+            buttons.append(("plan_spacecraft", b_plan))
+            y += 38
+            if spacecraft_result is not None:
+                t = font.render(f"Mission value: {spacecraft_result.get('mission_value', 0)}", True, (180, 220, 180))
+                surf.blit(t, (10, y))
+                y += 20
+                cc = spacecraft_result.get("constraint_checks", {})
+                t = font.render(f"Slew OK: {cc.get('slew_feasible', '—')}", True, (200, 200, 200))
+                surf.blit(t, (10, y))
+                y += 18
+                t = font.render(f"Power OK: {cc.get('power_duty_ok', '—')}", True, (200, 200, 200))
+                surf.blit(t, (10, y))
+                y += 18
+                n = len(spacecraft_result.get("activities", []))
+                t = font.render(f"Activities: {n} (saved to outputs/)", True, (150, 200, 150))
+                surf.blit(t, (10, y))
+            return buttons
+
+        if viz_mode == 2:
+            # --- Run full pipeline panel ---
+            t = font.render("Run full pipeline", True, (230, 230, 230))
+            surf.blit(t, (10, y))
+            y += 24
+            t = font.render("Aircraft: current waypoints.", True, (180, 180, 180))
+            surf.blit(t, (10, y))
+            y += 20
+            t = font.render("Spacecraft: default targets.", True, (180, 180, 180))
+            surf.blit(t, (10, y))
+            y += 28
+            b_full = pygame.Rect(10, y, 180, 36)
+            pygame.draw.rect(surf, (100, 60, 140), b_full)
+            t = font.render("Run aircraft + spacecraft", True, (255, 255, 255))
+            surf.blit(t, (b_full.x + 12, b_full.y + 10))
+            buttons.append(("run_full", b_full))
+            y += 44
+            if pipeline_message:
+                for line in pipeline_message.split("\n")[:6]:
+                    t = font.render(line[:38], True, (180, 220, 180))
+                    surf.blit(t, (10, y))
+                    y += 18
+            return buttons
+
+        # --- Aircraft panel ---
+        t = font.render("Aircraft mission", True, (230, 230, 230))
         surf.blit(t, (10, y))
         y += 28
         # Start
@@ -87,7 +177,6 @@ def main():
         y += 8
         # Buttons
         btn_h = 28
-        buttons = []
         b1 = pygame.Rect(10, y, 140, btn_h)
         pygame.draw.rect(surf, (60, 120, 60), b1)
         t = font.render("Set start (click)", True, (255, 255, 255))
@@ -175,12 +264,30 @@ def main():
             else:
                 t = font.render("Weather: —", True, (150, 150, 150))
             surf.blit(t, (10, y))
+        if aircraft_result:
+            y += 24
+            t = font.render("Constraint checks:", True, (180, 180, 180))
+            surf.blit(t, (10, y))
+            y += 18
+            cc = aircraft_result.get("constraint_checks", {})
+            t = font.render(f"  Energy: {cc.get('energy_ok', '—')}", True, (200, 200, 200))
+            surf.blit(t, (10, y))
+            y += 16
+            t = font.render(f"  Maneuver: {cc.get('maneuver_limits_ok', '—')}", True, (200, 200, 200))
+            surf.blit(t, (10, y))
+            y += 16
+            mc = aircraft_result.get("monte_carlo", {})
+            t = font.render(f"Monte-Carlo: {mc.get('success_rate', 0)*100:.0f}% ({mc.get('runs', 0)} runs)", True, (180, 220, 180))
+            surf.blit(t, (10, y))
+            y += 18
+            t = font.render("Saved: outputs/aircraft_mission.json", True, (150, 200, 150))
+            surf.blit(t, (10, y))
         return buttons
 
     def global_buttons(buttons_list, panel_y_offset=0):
         """Convert panel-relative buttons to screen coords."""
         out = []
-        px = MAP_WIDTH
+        px = map_width
         for name, r in buttons_list:
             out.append((name, pygame.Rect(px + r.x, r.y + panel_y_offset, r.w, r.h)))
         return out
@@ -198,15 +305,16 @@ def main():
             if e.type == pygame.VIDEORESIZE:
                 new_w, new_h = e.w, e.h
                 if new_w > PANEL_WIDTH and new_h > 100:
-                    MAP_WIDTH = new_w - PANEL_WIDTH
-                    map_view.width = MAP_WIDTH
-                    map_view.height = new_h
-                    map_view.screen_center = (MAP_WIDTH // 2, new_h // 2)
+                    map_width = new_w - PANEL_WIDTH
+                    win_h = new_h
+                    map_view.width = map_width
+                    map_view.height = win_h
+                    map_view.screen_center = (map_width // 2, win_h // 2)
                     screen = pygame.display.set_mode((new_w, new_h), pygame.RESIZABLE)
             if e.type == pygame.MOUSEBUTTONDOWN:
                 x, y = e.pos
                 if e.button == 1:
-                    if x < MAP_WIDTH and not mission_plan:
+                    if x < map_width and not mission_plan:
                         if mode == "set_start":
                             start_lat, start_lon = map_view.screen_to_lat_lon(x, y)
                             waypoints = [(start_lat, start_lon)]
@@ -221,7 +329,24 @@ def main():
                     else:
                         for name, r in global_buttons(buttons, 0):
                             if r.collidepoint(x, y):
-                                if name == "set_start":
+                                if name == "tab_0":
+                                    viz_mode = 0
+                                elif name == "tab_1":
+                                    viz_mode = 1
+                                elif name == "tab_2":
+                                    viz_mode = 2
+                                elif name == "plan_spacecraft":
+                                    tgt = [(wp[0], wp[1], 1.0) for wp in waypoints] if waypoints else [(52.5, 4.5, 1.0), (53.0, 5.0, 1.0)]
+                                    spacecraft_result = run_spacecraft_to_outputs(tgt, station=(station_lat, station_lon), schedule_days=7, save=True)
+                                elif name == "run_full":
+                                    cfg = DroneConfig(DRONE_TYPES[drone_type_idx], weight_kg, size_m, "Custom", plane_war)
+                                    params = cfg.to_aircraft_params()
+                                    params["energy_budget"] = 2e6
+                                    params["consumption_per_second"] = 80.0
+                                    tgt = [(wp[0], wp[1], 1.0) for wp in waypoints] if len(waypoints) >= 2 else [(52.5, 4.5, 1.0), (53.0, 5.0, 1.0)]
+                                    ac, sc = run_full_pipeline(waypoints, params, spacecraft_targets=tgt, station=(station_lat, station_lon))
+                                    pipeline_message = "Aircraft: " + ("saved" if ac else "skip (need 2+ waypoints)") + "\nSpacecraft: saved to outputs/"
+                                elif name == "set_start":
                                     mode = "set_start"
                                 elif name == "add_wp":
                                     mode = "add_waypoint"
@@ -229,6 +354,7 @@ def main():
                                     waypoints = []
                                     start_lat = start_lon = None
                                     mission_plan = None
+                                    aircraft_result = None
                                 elif name == "drone_left":
                                     drone_type_idx = (drone_type_idx - 1) % len(DRONE_TYPES)
                                 elif name == "drone_right":
@@ -277,14 +403,16 @@ def main():
                                         except Exception:
                                             waypoint_elevations = []
                                             waypoint_weather = []
+                                        aircraft_result = run_aircraft_to_outputs(waypoints, params, save=True)
                                     else:
                                         mission_plan = {}
+                                        aircraft_result = None
                                 break
-                elif e.button == 4 and x < MAP_WIDTH:
+                elif e.button == 4 and x < map_width:
                     map_view.zoom_in()
-                elif e.button == 5 and x < MAP_WIDTH:
+                elif e.button == 5 and x < map_width:
                     map_view.zoom_out()
-            if e.type == pygame.MOUSEMOTION and e.buttons[0] and 0 <= e.pos[0] < MAP_WIDTH:
+            if e.type == pygame.MOUSEMOTION and e.buttons[0] and 0 <= e.pos[0] < map_width:
                 map_view.pan(-e.rel[0], -e.rel[1])
 
         # Update flight position for replay
