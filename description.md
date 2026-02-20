@@ -1,3 +1,5 @@
+Project Name: DroneMission
+
 About the challenge
 AeroHack is an advanced aerospace engineering challenge where teams build a single, unified mission planning + simulation framework that works for both aircraft and spacecraft. Your system must model real constraints, produce feasible mission plans, and demonstrate robustness through validation.
 
