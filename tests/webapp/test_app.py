@@ -45,3 +45,14 @@ def test_api_spacecraft_returns_json(client):
         assert "activities" in data or "mission_value" in data or "error" in data
     else:
         assert r.status_code == 404
+
+
+def test_api_settings_returns_json(client):
+    r = client.get("/api/settings")
+    assert r.status_code == 200
+    assert r.content_type and "json" in r.content_type
+    data = r.get_json()
+    assert "aircraft" in data and "spacecraft" in data
+    assert "waypoints" in data["aircraft"]
+    assert "energy_budget" in data["aircraft"]
+    assert "station" in data["spacecraft"]

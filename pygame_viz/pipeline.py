@@ -59,10 +59,13 @@ def run_aircraft_to_outputs(waypoints: list, drone_params: dict, save: bool = Tr
     }
 
     wp_alt = plan.get("waypoints_with_altitude") or [(p[0], p[1], model.default_altitude_m) for p in plan["waypoints"]]
-    planned_route = [
-        {"lat": p[0], "lon": p[1], "alt_m": p[2], "t": plan["timestamps"][i]}
-        for i, p in enumerate(wp_alt)
-    ]
+    states = plan.get("states") or []
+    planned_route = []
+    for i, p in enumerate(wp_alt):
+        entry = {"lat": p[0], "lon": p[1], "alt_m": p[2], "t": plan["timestamps"][i]}
+        if i < len(states):
+            entry["energy_used"] = getattr(states[i], "energy_used", None)
+        planned_route.append(entry)
 
     # Same output structure as run_all.run_aircraft() so saved JSON matches main mission module
     out = {

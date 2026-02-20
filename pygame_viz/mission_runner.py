@@ -1,6 +1,8 @@
 """
 Run mission from waypoints using aircraft planner; return path with timestamps for replay.
 """
+from __future__ import annotations
+
 import os
 import sys
 
@@ -83,4 +85,30 @@ def interpolate_position(plan: dict, t: float) -> tuple | None:
             lat = waypoints[i][0] + a * (waypoints[i + 1][0] - waypoints[i][0])
             lon = waypoints[i][1] + a * (waypoints[i + 1][1] - waypoints[i][1])
             return (float(lat), float(lon))
+    return None
+
+
+def interpolate_energy(plan: dict, t: float) -> tuple[float, float] | None:
+    """Return (energy_used, energy_budget) at time t. Returns None if plan has no states or model."""
+    states = plan.get("states")
+    model = plan.get("_model")
+    if not states or not model:
+        return None
+    budget = getattr(model, "energy_budget", None)
+    if budget is None:
+        return None
+    t = float(t)
+    if t <= states[0].t:
+        return (float(states[0].energy_used), float(budget))
+    if t >= states[-1].t:
+        return (float(states[-1].energy_used), float(budget))
+    for i in range(len(states) - 1):
+        t0, t1 = states[i].t, states[i + 1].t
+        if t0 <= t <= t1:
+            dt = t1 - t0
+            if dt <= 0:
+                return (float(states[i + 1].energy_used), float(budget))
+            a = (t - t0) / dt
+            e = states[i].energy_used + a * (states[i + 1].energy_used - states[i].energy_used)
+            return (float(e), float(budget))
     return None

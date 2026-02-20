@@ -17,8 +17,9 @@ from pygame_viz.map_view import MapView, TILE_SIZE
 from pygame_viz.elevation import get_elevations_bulk
 from pygame_viz.weather import get_weather_for_waypoints
 from pygame_viz.config import DRONE_TYPES, PLANE_MODELS_WAR, PLANE_MODELS_CIVIL, DroneConfig
-from pygame_viz.mission_runner import run_mission, interpolate_position
+from pygame_viz.mission_runner import run_mission, interpolate_position, interpolate_energy
 from pygame_viz.pipeline import run_aircraft_to_outputs, run_spacecraft_to_outputs, run_full_pipeline
+from pygame_viz.spacecraft_view import draw_spacecraft_view
 
 # Layout
 MAP_WIDTH = 900
@@ -68,6 +69,9 @@ def main():
     panel_content_height = WIN_H  # set by draw_panel
     save_in_progress = False  # True while background thread is saving mission
     mission_saved_message = ""  # "Mission created and saved. ..." after save completes
+    mission_crashed = False  # True when fuel/battery depleted during replay
+    mission_crash_pos = None  # (lat, lon) where vehicle crashed or failed
+    mission_crash_is_plane = True  # True = plane (crash), False = drone/UAV (failing down)
 
     # Dropdown option values (weight kg, size m, altitude m)
     WEIGHT_OPTS = [1, 5, 10, 25, 50, 100, 500, 1100, 2200, 11600, 79000]
@@ -321,7 +325,21 @@ def main():
                     buttons.append((f"choice_plane_model_{i}", ropt))
                 y += len(models) * dd_option_h
             y += 8
-        y += 10
+        y += 8
+        # Fuel (plane) / Battery (drone, UAV): capacity and consumption — checked during mission; depletion = crash/fail
+        is_plane = (dt == "Plane")
+        cap_label = "Fuel capacity (J):" if is_plane else "Battery capacity (J):"
+        cons_label = "Fuel consumption (J/s):" if is_plane else "Battery consumption (J/s):"
+        surf.blit(font.render(cap_label, True, (180, 180, 180)), (10, y))
+        surf.blit(font.render("  2e6 (used in mission)", True, (200, 200, 200)), (10, y + 18))
+        y += 36
+        surf.blit(font.render(cons_label, True, (180, 180, 180)), (10, y))
+        surf.blit(font.render("  80 J/s (used in mission)", True, (200, 200, 200)), (10, y + 18))
+        y += 28
+        if mission_crashed:
+            surf.blit(font.render("CRASHED (fuel out)" if mission_crash_is_plane else "FAILING DOWN (battery out)", True, (255, 100, 80)), (10, y))
+            y += 20
+        y += 6
         # Start mission
         b_go = pygame.Rect(10, y, 180, 36)
         if mission_plan is None and not save_in_progress:
@@ -462,6 +480,8 @@ def main():
                                     start_lat = start_lon = None
                                     mission_plan = None
                                     aircraft_result = None
+                                    mission_crashed = False
+                                    mission_crash_pos = None
                                     dropdown_open = None
                                 elif name == "dropdown_drone_type":
                                     dropdown_open = "drone_type" if dropdown_open != "drone_type" else None
@@ -565,13 +585,24 @@ def main():
                 if e.buttons[0] or e.buttons[2]:  # left or right button drag
                     map_view.pan(-e.rel[0], -e.rel[1])
 
-        # Update flight position for replay (plane moves along planned route)
+        # Update flight position for replay (plane/drone moves along planned route; check fuel/battery)
         if mission_plan and mission_start_time is not None and mission_plan.get("timestamps"):
             elapsed = (time.time() - mission_start_time) * flight_speed
             total_t = mission_plan["timestamps"][-1]
+            if not mission_crashed:
+                energy_result = interpolate_energy(mission_plan, elapsed)
+                if energy_result is not None:
+                    energy_used, energy_budget = energy_result
+                    if energy_used >= energy_budget:
+                        mission_crashed = True
+                        mission_crash_pos = interpolate_position(mission_plan, elapsed) or (mission_plan["waypoints"][-1][0], mission_plan["waypoints"][-1][1])
+                        mission_crash_is_plane = (DRONE_TYPES[drone_type_idx] == "Plane")
             if total_t <= 0:
                 current_flight_pos = (mission_plan["waypoints"][0][0], mission_plan["waypoints"][0][1]) if mission_plan.get("waypoints") else None
                 current_flight_idx = 0
+            elif mission_crashed and mission_crash_pos:
+                current_flight_pos = mission_crash_pos
+                current_flight_idx = -1
             elif elapsed >= total_t:
                 current_flight_pos = (mission_plan["waypoints"][-1][0], mission_plan["waypoints"][-1][1])
                 current_flight_idx = len(mission_plan["waypoints"]) - 1
@@ -584,23 +615,35 @@ def main():
             current_flight_pos = None
             current_flight_idx = -1
 
-        # Draw: panel on left, map on right
+        # Draw: panel on left, map or spacecraft view on right
         screen.fill((40, 42, 46))
-        # Map area (right side)
         map_surf = screen.subsurface(map_rect())
         map_surf.fill((30, 30, 30))
-        map_view.draw(map_surf)
-        all_wps = waypoints if waypoints else []
-        # Always show user waypoints (so they never disappear). When mission running, show planned path and plane.
-        if mission_plan and mission_plan.get("waypoints"):
-            map_view.draw_path_line(map_surf, mission_plan["waypoints"])
-            map_view.draw_waypoint_markers(map_surf, all_wps, start_idx=0, current_idx=-1)
+        if viz_mode == 1:
+            # Spacecraft tab: full Earth with launch point and spacecraft in orbit
+            draw_spacecraft_view(map_surf, map_width, win_h, station_lat, station_lon, orbit_altitude_km=400.0)
         else:
-            map_view.draw_waypoints(map_surf, all_wps, start_idx=0, current_idx=-1)
-        if current_flight_pos:
-            pt = map_view.lat_lon_to_screen(current_flight_pos[0], current_flight_pos[1])
-            pygame.draw.circle(map_surf, (255, 200, 0), pt, 12)
-            pygame.draw.circle(map_surf, (255, 255, 255), pt, 12, 3)
+            # Aircraft or Run full: 2D map
+            map_view.draw(map_surf)
+            all_wps = waypoints if waypoints else []
+            if mission_plan and mission_plan.get("waypoints"):
+                map_view.draw_path_line(map_surf, mission_plan["waypoints"])
+                map_view.draw_waypoint_markers(map_surf, all_wps, start_idx=0, current_idx=-1)
+            else:
+                map_view.draw_waypoints(map_surf, all_wps, start_idx=0, current_idx=-1)
+            if current_flight_pos:
+                pt = map_view.lat_lon_to_screen(current_flight_pos[0], current_flight_pos[1])
+                if mission_crashed and mission_crash_pos:
+                    if mission_crash_is_plane:
+                        pygame.draw.circle(map_surf, (180, 40, 40), pt, 14)
+                        pygame.draw.line(map_surf, (255, 255, 255), (pt[0] - 10, pt[1] - 10), (pt[0] + 10, pt[1] + 10), 3)
+                        pygame.draw.line(map_surf, (255, 255, 255), (pt[0] + 10, pt[1] - 10), (pt[0] - 10, pt[1] + 10), 3)
+                    else:
+                        pygame.draw.circle(map_surf, (200, 80, 40), pt, 14)
+                        pygame.draw.polygon(map_surf, (255, 255, 255), [(pt[0], pt[1] - 12), (pt[0] - 8, pt[1] + 10), (pt[0] + 8, pt[1] + 10)])
+                else:
+                    pygame.draw.circle(map_surf, (255, 200, 0), pt, 12)
+                    pygame.draw.circle(map_surf, (255, 255, 255), pt, 12, 3)
         # Panel (left side): draw to tall surface, then blit visible region with scroll
         panel_content_surf = pygame.Surface((PANEL_WIDTH, MAX_PANEL_CONTENT_HEIGHT))
         buttons, panel_content_height = draw_panel(panel_content_surf)
