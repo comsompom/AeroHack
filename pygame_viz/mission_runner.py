@@ -11,9 +11,9 @@ if ROOT not in sys.path:
 
 def run_mission(waypoints: list, drone_params: dict) -> dict | None:
     """
-    waypoints: [(lat, lon), ...]
-    drone_params: from DroneConfig.to_aircraft_params() + energy_budget, etc.
-    Returns plan with 'waypoints', 'timestamps', 'states', or None on failure.
+    waypoints: [(lat, lon), ...] or [(lat, lon, alt_m), ...]. Altitudes checked and corrected to aircraft envelope.
+    drone_params: from DroneConfig.to_aircraft_params() + energy_budget, min_altitude_m, max_altitude_m, default_altitude_m.
+    Returns plan with 'waypoints', 'waypoints_with_altitude', 'timestamps', 'states', or None on failure.
     """
     if len(waypoints) < 2:
         return None
@@ -26,6 +26,9 @@ def run_mission(waypoints: list, drone_params: dict) -> dict | None:
             max_turn_rate_degs=drone_params.get("max_turn_rate_degs", 15.0),
             energy_budget=drone_params.get("energy_budget", 2e6),
             consumption_per_second=drone_params.get("consumption_per_second", 80.0),
+            min_altitude_m=drone_params.get("min_altitude_m", 0.0),
+            max_altitude_m=drone_params.get("max_altitude_m", 4000.0),
+            default_altitude_m=drone_params.get("default_altitude_m", 100.0),
         )
         plan = plan_aircraft_mission(waypoints, model)
         return plan

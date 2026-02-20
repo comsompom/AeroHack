@@ -40,7 +40,7 @@ python pygame_viz/main.py
 
 1. **Set start:** Click "Set start (click)", then click on the map.
 2. **Add waypoints:** Click "Add waypoint (click)", then click on the map for each waypoint. The last one you add is the mission end.
-3. **Zoom:** Scroll wheel over the map. **Pan:** Drag with left mouse.
+3. **Zoom:** Scroll wheel over the map. **Pan:** Hold **left** mouse button and drag on the map (grab and move).
 4. **Drone type:** Use &lt; &gt; to pick UAV / Plane / Spacecraft / Quadcopter.
 5. **Weight / Size:** Use [-] [+] or, for Plane, pick a War/Civil model (then &lt; &gt; for model).
 6. **Start mission:** Click "Start mission". Elevation and weather are fetched; the planned path is replayed with a yellow marker. To run another mission, use "Clear all" and set waypoints again.

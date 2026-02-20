@@ -25,11 +25,25 @@
     .schedule-table th { background: #21262d; }
     pre { overflow: auto; font-size: 0.85rem; padding: 1rem; background: #0d1117; border-radius: 6px; }
     .error { color: #f85149; }
+    .start-mission-bar { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; }
+    .start-mission-btn { padding: 0.6rem 1.2rem; font-size: 1rem; cursor: pointer; background: #238636; border: 1px solid #2ea043; color: #fff; border-radius: 6px; }
+    .start-mission-btn:hover:not(:disabled) { background: #2ea043; }
+    .start-mission-btn:disabled { opacity: 0.7; cursor: not-allowed; }
+    #start-mission-status { color: #8b949e; }
+    #start-mission-status.running { color: #58a6ff; }
+    #start-mission-status.error { color: #f85149; }
+    .placeholder { color: #8b949e; margin: 0.5rem 0; }
+    code { background: #21262d; padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 0.9em; }
   </style>
 </head>
 <body>
   <h1>DroneMission — Mission Visualization</h1>
-  <p>Unified aircraft + spacecraft mission planning (AeroHack).</p>
+  <p>Unified aircraft + spacecraft mission planning (AeroHack). The mission is defined in <code>src/mission_settings.py</code> (waypoints, model, targets).</p>
+
+  <div class="start-mission-bar">
+    <button type="button" id="start-mission-btn" class="start-mission-btn">Start mission</button>
+    <span id="start-mission-status"></span>
+  </div>
 
   <div class="tabs">
     <button type="button" class="tab active" data-panel="aircraft">Aircraft mission</button>
@@ -40,7 +54,8 @@
     <h2>Aircraft mission</h2>
     <div id="aircraft-metrics" class="metrics"></div>
     <div id="aircraft-route">
-      <div id="map"></div>
+      <p id="aircraft-placeholder" class="placeholder">Click <strong>Start mission</strong> above to run the mission from settings and show the route on the map.</p>
+      <div id="map" style="display: none;"></div>
     </div>
   </div>
 
@@ -63,13 +78,45 @@
       });
     });
 
+    function showAircraftMap(route) {
+      const placeholder = document.getElementById('aircraft-placeholder');
+      const mapEl = document.getElementById('map');
+      if (!route.length || typeof L === 'undefined') {
+        if (placeholder) placeholder.style.display = '';
+        if (mapEl) mapEl.style.display = 'none';
+        return;
+      }
+      if (placeholder) placeholder.style.display = 'none';
+      if (mapEl) mapEl.style.display = 'block';
+      if (window._aircraftMap) {
+        window._aircraftMap.remove();
+        window._aircraftMap = null;
+      }
+      const map = L.map('map').setView([route[0].lat ?? route[0][0], route[0].lon ?? route[0][1]], 6);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(map);
+      const pts = route.map(p => [p.lat ?? p[0], p.lon ?? p[1]]);
+      L.polyline(pts, { color: '#238636', weight: 4 }).addTo(map);
+      route.forEach((p, i) => {
+        const lat = p.lat ?? p[0];
+        const lon = p.lon ?? p[1];
+        const t = p.t != null ? ' t=' + p.t.toFixed(0) + ' s' : '';
+        L.marker([lat, lon]).addTo(map).bindPopup('WP' + (i + 1) + t);
+      });
+      map.fitBounds(pts, { padding: [20, 20] });
+      window._aircraftMap = map;
+    }
+
     async function loadAircraft() {
-      const el = document.getElementById('aircraft-route');
       const metrics = document.getElementById('aircraft-metrics');
+      const placeholder = document.getElementById('aircraft-placeholder');
+      const mapEl = document.getElementById('map');
       try {
         const r = await fetch('/api/aircraft');
         if (!r.ok) {
-          el.innerHTML = '<p class="error">' + (await r.json()).error + '</p>';
+          const err = (await r.json()).error || 'No aircraft mission.';
+          if (placeholder) { placeholder.textContent = err + ' Click Start mission to run the mission from settings and show the route on the map.'; placeholder.style.display = ''; }
+          if (mapEl) mapEl.style.display = 'none';
+          metrics.innerHTML = '';
           return;
         }
         const d = await r.json();
@@ -78,20 +125,12 @@
           '<div class="metric"><span>Total energy</span><strong>' + (d.total_energy != null ? d.total_energy.toFixed(0) : '—') + '</strong></div>',
           '<div class="metric"><span>Monte-Carlo success</span><strong>' + (d.monte_carlo && d.monte_carlo.success_rate != null ? (d.monte_carlo.success_rate * 100).toFixed(0) + '%' : '—') + '</strong></div>'
         ].join('');
-        const route = d.planned_route || d.waypoints || [];
-        if (route.length && typeof L !== 'undefined') {
-          el.innerHTML = '<div id="map"></div>';
-          const map = L.map('map').setView([route[0].lat || route[0][0], route[0].lon || route[0][1]], 10);
-          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(map);
-          const pts = route.map(p => [p.lat ?? p[0], p.lon ?? p[1]]);
-          L.polyline(pts, { color: '#238636', weight: 3 }).addTo(map);
-          route.forEach((p, i) => L.marker([p.lat ?? p[0], p.lon ?? p[1]]).addTo(map).bindPopup('WP' + (i + 1) + ' t=' + (p.t != null ? p.t.toFixed(0) : '') + 's'));
-          map.fitBounds(pts);
-        } else {
-          el.innerHTML = '<pre>' + JSON.stringify(route, null, 2) + '</pre>';
-        }
+        const route = d.planned_route || d.flight_path_with_timestamps || [];
+        showAircraftMap(route);
       } catch (e) {
-        el.innerHTML = '<p class="error">Failed to load aircraft data.</p>';
+        if (placeholder) { placeholder.textContent = 'Failed to load aircraft data. Click Start mission to run the mission.'; placeholder.style.display = ''; }
+        if (mapEl) mapEl.style.display = 'none';
+        metrics.innerHTML = '';
       }
     }
 
@@ -126,6 +165,32 @@
         el.innerHTML = '<p class="error">Failed to load spacecraft data.</p>';
       }
     }
+
+    document.getElementById('start-mission-btn').addEventListener('click', async function() {
+      const btn = this;
+      const status = document.getElementById('start-mission-status');
+      btn.disabled = true;
+      status.textContent = 'Running mission…';
+      status.className = 'running';
+      status.classList.remove('error');
+      try {
+        const r = await fetch('/api/start_mission', { method: 'POST' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          status.textContent = 'Error: ' + (data.error || r.statusText);
+          status.className = 'error';
+          return;
+        }
+        status.textContent = 'Done. Showing visualization.';
+        await loadAircraft();
+        await loadSpacecraft();
+      } catch (e) {
+        status.textContent = 'Error: ' + e.message;
+        status.className = 'error';
+      } finally {
+        btn.disabled = false;
+      }
+    });
 
     loadAircraft();
     loadSpacecraft();

@@ -1,5 +1,6 @@
 """
 Run aircraft and/or spacecraft pipeline (same as src.run_all): save to outputs/, constraint checks, Monte-Carlo, plot/CSV.
+Pygame "Start mission" produces the same aircraft_mission.json and aircraft_mission_plot.png as the main plan/simulate module.
 """
 import json
 import os
@@ -12,7 +13,8 @@ if ROOT not in sys.path:
 
 def run_aircraft_to_outputs(waypoints: list, drone_params: dict, save: bool = True) -> dict | None:
     """
-    Plan and simulate aircraft mission; optionally save to outputs/ (JSON + plot).
+    Plan and simulate aircraft mission; save to outputs/ in the same format as run_all.run_aircraft().
+    waypoints: [(lat, lon), ...] or [(lat, lon, alt_m), ...]; altitudes checked and corrected.
     Returns same structure as run_all.run_aircraft (or None on failure).
     """
     if len(waypoints) < 2:
@@ -21,7 +23,12 @@ def run_aircraft_to_outputs(waypoints: list, drone_params: dict, save: bool = Tr
         from src.aircraft.model import AircraftModel
         from src.aircraft.planner import plan_aircraft_mission
         from src.aircraft.simulate import simulate_mission, monte_carlo_mission
-        from src.aircraft.constraints import EnduranceConstraint, ManeuverConstraint, GeofenceConstraint
+        from src.aircraft.constraints import EnduranceConstraint, ManeuverConstraint, GeofenceConstraint, AltitudeConstraint
+        from src.mission_settings import (
+            AIRCRAFT_NO_FLY_ZONES,
+            MONTE_CARLO_NUM_SEEDS,
+            MONTE_CARLO_SEED,
+        )
     except ImportError:
         return None
 
@@ -30,31 +37,86 @@ def run_aircraft_to_outputs(waypoints: list, drone_params: dict, save: bool = Tr
         max_turn_rate_degs=drone_params.get("max_turn_rate_degs", 15.0),
         energy_budget=drone_params.get("energy_budget", 2e6),
         consumption_per_second=drone_params.get("consumption_per_second", 80.0),
+        min_altitude_m=drone_params.get("min_altitude_m", 0.0),
+        max_altitude_m=drone_params.get("max_altitude_m", 4000.0),
+        default_altitude_m=drone_params.get("default_altitude_m", 100.0),
     )
     plan = plan_aircraft_mission(waypoints, model)
     states, total_time, total_energy, checks = simulate_mission(plan)
-    mc = monte_carlo_mission(plan, num_seeds=10, seed=42)
+    mc = monte_carlo_mission(plan, num_seeds=MONTE_CARLO_NUM_SEEDS, seed=MONTE_CARLO_SEED)
 
+    no_fly_zones = list(AIRCRAFT_NO_FLY_ZONES)
     endurance_ok, _ = EnduranceConstraint(model).check(plan)
     maneuver_ok, _ = ManeuverConstraint(model).check(plan)
-    geofence_ok, geofence_v = True, 0.0
+    geofence_ok, geofence_v = (True, 0.0) if not no_fly_zones else GeofenceConstraint(no_fly_zones).check(plan)
+    altitude_ok, _ = AltitudeConstraint(model).check(plan)
     constraint_checks = {
         "energy_ok": checks["energy_ok"],
         "endurance_respected": endurance_ok,
         "maneuver_limits_ok": maneuver_ok,
-        "geofence_violations": int(geofence_v) if geofence_ok else 1,
+        "geofence_violations": int(geofence_v) if geofence_ok else int(geofence_v),
+        "altitude_within_envelope": altitude_ok,
     }
 
+    wp_alt = plan.get("waypoints_with_altitude") or [(p[0], p[1], model.default_altitude_m) for p in plan["waypoints"]]
+    planned_route = [
+        {"lat": p[0], "lon": p[1], "alt_m": p[2], "t": plan["timestamps"][i]}
+        for i, p in enumerate(wp_alt)
+    ]
+
+    # Same output structure as run_all.run_aircraft() so saved JSON matches main mission module
     out = {
+        "module": "Aircraft (UAV / fixed-wing)",
+        "objective": "minimize_time",
+        "model_description": (
+            "Point-mass kinematics; turn rate limit (deg/s) and bank equivalent; "
+            "energy consumption model (per-second + turn penalty)."
+        ),
+        "model_parameters": {
+            "cruise_speed_ms": model.cruise_speed_ms,
+            "max_turn_rate_degs": model.max_turn_rate_degs,
+            "energy_budget": model.energy_budget,
+            "consumption_per_second": model.consumption_per_second,
+            "min_altitude_m": model.min_altitude_m,
+            "max_altitude_m": model.max_altitude_m,
+            "default_altitude_m": model.default_altitude_m,
+        },
+        "wind_incorporation": (
+            "Wind as callable wind(t, lat, lon) -> (v_north, v_east) m/s. "
+            "Used in segment time and simulation (groundspeed = airspeed + wind along track). "
+            "Nominal run: zero wind. Robustness: Monte-Carlo with multiple wind seeds."
+        ),
+        "constraints": {
+            "endurance_energy": "Total energy <= energy_budget; consumption_per_second + turn penalty.",
+            "maneuver_limits": "Turn rate (deg/s) <= max_turn_rate_degs per segment.",
+            "geofencing": "Path must not enter no-fly polygons (optional altitude bands via polygons).",
+            "altitude": "Waypoint altitudes within [min_altitude_m, max_altitude_m]; impossible values checked and corrected.",
+        },
+        "no_fly_zones": no_fly_zones,
         "waypoints": waypoints,
-        "planned_route": [
-            {"lat": p[0], "lon": p[1], "t": plan["timestamps"][i]}
-            for i, p in enumerate(plan["waypoints"])
-        ],
+        "waypoints_corrected_altitude": wp_alt,
+        "planned_route": planned_route,
+        "flight_path_with_timestamps": planned_route,
         "total_time_s": plan["total_time"],
         "total_energy": plan["total_energy"],
+        "performance_metrics": {
+            "total_time_s": plan["total_time"],
+            "total_energy": plan["total_energy"],
+        },
         "constraint_checks": constraint_checks,
-        "monte_carlo": {"success_rate": mc["success_rate"], "runs": mc["runs"]},
+        "robustness": {
+            "description": "Monte-Carlo: multiple wind seeds (random constant wind); plan feasible and performance acceptable.",
+            "monte_carlo": {
+                "success_rate": mc["success_rate"],
+                "runs": mc["runs"],
+                "total_times": mc.get("total_times", []),
+                "total_energies": mc.get("total_energies", []),
+            },
+        },
+        "monte_carlo": {
+            "success_rate": mc["success_rate"],
+            "runs": mc["runs"],
+        },
     }
 
     if save:

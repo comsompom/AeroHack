@@ -8,6 +8,8 @@ from src.aircraft.model import (
     bearing_deg,
     distance_m,
     turn_angle_deg,
+    waypoint_altitude,
+    correct_waypoint_altitudes,
 )
 
 
@@ -62,3 +64,27 @@ def test_simulate_path():
     assert states[-1].lat == 52.1
     assert total_time > 0
     assert total_energy > 0
+
+
+def test_waypoint_altitude_with_alt():
+    assert waypoint_altitude((52.0, 4.0, 200.0)) == 200.0
+
+
+def test_waypoint_altitude_without_alt():
+    assert waypoint_altitude((52.0, 4.0)) == 100.0
+
+
+def test_correct_waypoint_altitudes_fills_default():
+    out = correct_waypoint_altitudes([(52.0, 4.0), (52.1, 4.0)], 0.0, 4000.0, 150.0)
+    assert out == [(52.0, 4.0, 150.0), (52.1, 4.0, 150.0)]
+
+
+def test_correct_waypoint_altitudes_clamps():
+    out = correct_waypoint_altitudes([(52.0, 4.0, 5000.0), (52.1, 4.0, -100.0)], 0.0, 4000.0, 100.0)
+    assert out[0][2] == 4000.0
+    assert out[1][2] == 0.0
+
+
+def test_correct_waypoint_altitudes_preserves_valid():
+    out = correct_waypoint_altitudes([(52.0, 4.0, 200.0)], 0.0, 4000.0, 100.0)
+    assert out == [(52.0, 4.0, 200.0)]

@@ -39,9 +39,10 @@ def main():
     clock = pygame.time.Clock()
 
     map_view = MapView(map_width, win_h)
-    waypoints = []
+    waypoints = []  # list of (lat, lon, alt_m)
     start_lat, start_lon = None, None
     mode = "add_waypoint"  # add_waypoint | set_start | idle
+    default_altitude_m = 100.0  # altitude for new waypoints; checked/corrected to aircraft envelope
     drone_type_idx = 0
     weight_kg = 10.0
     size_m = 2.0
@@ -59,9 +60,18 @@ def main():
     pipeline_message = ""  # "Run full" status
     viz_mode = 0  # 0=Aircraft, 1=Spacecraft, 2=Run full
     station_lat, station_lon = 52.0, 4.0  # ground station for spacecraft
+    dropdown_open = None  # None | "drone_type" | "weight" | "size" | "plane_type" | "plane_model"
+
+    # Dropdown option values (weight kg, size m, altitude m)
+    WEIGHT_OPTS = [1, 5, 10, 25, 50, 100, 500, 1100, 2200, 11600, 79000]
+    SIZE_OPTS = [0.5, 1.2, 2.4, 5, 10, 11, 14.8, 20, 35.4, 35.8]
+    ALTITUDE_OPTS = [50, 100, 150, 200, 300, 500, 1000, 2000, 4000]
 
     def panel_rect():
-        return pygame.Rect(map_width, 0, PANEL_WIDTH, win_h)
+        return pygame.Rect(0, 0, PANEL_WIDTH, win_h)
+
+    def map_rect():
+        return pygame.Rect(PANEL_WIDTH, 0, map_width, win_h)
 
     def draw_panel():
         surf = screen.subsurface(panel_rect())
@@ -167,7 +177,8 @@ def main():
         surf.blit(t, (10, y))
         y += 22
         for i, wp in enumerate(waypoints[:8]):
-            t = font.render(f"  {i+1}. {wp[0]:.4f}, {wp[1]:.4f}", True, (200, 200, 200))
+            alt = wp[2] if len(wp) >= 3 else default_altitude_m
+            t = font.render(f"  {i+1}. {wp[0]:.4f}, {wp[1]:.4f} @ {alt:.0f}m", True, (200, 200, 200))
             surf.blit(t, (10, y))
             y += 18
         if len(waypoints) > 8:
@@ -194,52 +205,115 @@ def main():
         t = font.render("Clear all", True, (255, 255, 255))
         surf.blit(t, (b3.x + 8, b3.y + 6))
         buttons.append(("clear", b3))
-        y += btn_h + 20
+        y += btn_h + 12
+        # Altitude (m) for waypoints — checked and corrected to aircraft min/max when running mission
+        t = font.render("Altitude (m):", True, (180, 180, 180))
+        surf.blit(t, (10, y))
+        y += 20
+        r_alt = pygame.Rect(10, y, 200, 24)
+        pygame.draw.rect(surf, (50, 52, 56), r_alt)
+        pygame.draw.rect(surf, (100, 102, 106), r_alt, 1)
+        surf.blit(font.render(f"{default_altitude_m:.0f}", True, (220, 220, 220)), (14, y + 4))
+        buttons.append(("dropdown_altitude", r_alt))
+        y += 28
+        if dropdown_open == "altitude":
+            for i, a in enumerate(ALTITUDE_OPTS):
+                ropt = pygame.Rect(10, y + i * 22, 200, 22)
+                col = (70, 120, 80) if abs(default_altitude_m - a) < 0.01 else (50, 52, 56)
+                pygame.draw.rect(surf, col, ropt)
+                pygame.draw.rect(surf, (80, 82, 86), ropt, 1)
+                surf.blit(font.render(f"{a:.0f} m", True, (220, 220, 220)), (14, ropt.y + 3))
+                buttons.append((f"choice_altitude_{i}", ropt))
+            y += len(ALTITUDE_OPTS) * 22
+        y += 12
+        # --- Dropdowns: Drone type, Weight, Size, Plane type, Plane model ---
+        dd_box_w = 200
+        dd_box_h = 24
+        dd_option_h = 22
+        dd_bg = (50, 52, 56)
+        dd_highlight = (70, 120, 80)
+        def draw_dropdown_box(ry, label_text, value_text):
+            surf.blit(font.render(label_text, True, (180, 180, 180)), (10, ry - 20))
+            r = pygame.Rect(10, ry, dd_box_w, dd_box_h)
+            pygame.draw.rect(surf, dd_bg, r)
+            pygame.draw.rect(surf, (100, 102, 106), r, 1)
+            surf.blit(font.render(value_text, True, (220, 220, 220)), (14, ry + 4))
+            # Arrow
+            cx, cy = 10 + dd_box_w - 14, ry + dd_box_h // 2
+            pygame.draw.polygon(surf, (180, 180, 180), [(cx - 4, cy - 3), (cx + 4, cy - 3), (cx, cy + 3)])
+            return r
         # Drone type
-        t = font.render("Drone type:", True, (180, 180, 180))
-        surf.blit(t, (10, y))
-        y += 22
         dt = DRONE_TYPES[drone_type_idx]
-        t = font.render(f"  [{dt}] < >", True, (200, 200, 200))
-        surf.blit(t, (10, y))
-        b_left = pygame.Rect(10, y - 2, 24, 22)
-        b_right = pygame.Rect(36, y - 2, 24, 22)
-        buttons.append(("drone_left", b_left))
-        buttons.append(("drone_right", b_right))
-        y += 28
-        # Weight / Size (with +/-)
-        t = font.render(f"Weight (kg): {weight_kg:.1f}  [-] [+]", True, (200, 200, 200))
-        surf.blit(t, (10, y))
-        b_wmin = pygame.Rect(130, y - 2, 22, 20)
-        b_wplus = pygame.Rect(158, y - 2, 22, 20)
-        buttons.append(("weight_min", b_wmin))
-        buttons.append(("weight_plus", b_wplus))
-        y += 24
-        t = font.render(f"Size (m): {size_m:.1f}  [-] [+]", True, (200, 200, 200))
-        surf.blit(t, (10, y))
-        b_smin = pygame.Rect(110, y - 2, 22, 20)
-        b_splus = pygame.Rect(138, y - 2, 22, 20)
-        buttons.append(("size_min", b_smin))
-        buttons.append(("size_plus", b_splus))
-        y += 28
-        # Plane model (if Plane)
+        r_drone = draw_dropdown_box(y + 20, "Drone type:", dt)
+        buttons.append(("dropdown_drone_type", r_drone))
+        y += 20 + dd_box_h
+        if dropdown_open == "drone_type":
+            for i, d in enumerate(DRONE_TYPES):
+                ropt = pygame.Rect(10, y + i * dd_option_h, dd_box_w, dd_option_h)
+                col = dd_highlight if i == drone_type_idx else dd_bg
+                pygame.draw.rect(surf, col, ropt)
+                pygame.draw.rect(surf, (80, 82, 86), ropt, 1)
+                surf.blit(font.render(d, True, (220, 220, 220)), (14, ropt.y + 3))
+                buttons.append((f"choice_drone_{i}", ropt))
+            y += len(DRONE_TYPES) * dd_option_h
+        y += 8
+        # Weight
+        r_weight = draw_dropdown_box(y + 20, "Weight (kg):", f"{weight_kg:.1f}")
+        buttons.append(("dropdown_weight", r_weight))
+        y += 20 + dd_box_h
+        if dropdown_open == "weight":
+            for i, w in enumerate(WEIGHT_OPTS):
+                ropt = pygame.Rect(10, y + i * dd_option_h, dd_box_w, dd_option_h)
+                col = dd_highlight if abs(weight_kg - w) < 0.01 else dd_bg
+                pygame.draw.rect(surf, col, ropt)
+                pygame.draw.rect(surf, (80, 82, 86), ropt, 1)
+                surf.blit(font.render(f"{w} kg", True, (220, 220, 220)), (14, ropt.y + 3))
+                buttons.append((f"choice_weight_{i}", ropt))
+            y += len(WEIGHT_OPTS) * dd_option_h
+        y += 8
+        # Size
+        r_size = draw_dropdown_box(y + 20, "Size (m):", f"{size_m:.1f}")
+        buttons.append(("dropdown_size", r_size))
+        y += 20 + dd_box_h
+        if dropdown_open == "size":
+            for i, s in enumerate(SIZE_OPTS):
+                ropt = pygame.Rect(10, y + i * dd_option_h, dd_box_w, dd_option_h)
+                col = dd_highlight if abs(size_m - s) < 0.01 else dd_bg
+                pygame.draw.rect(surf, col, ropt)
+                pygame.draw.rect(surf, (80, 82, 86), ropt, 1)
+                surf.blit(font.render(f"{s} m", True, (220, 220, 220)), (14, ropt.y + 3))
+                buttons.append((f"choice_size_{i}", ropt))
+            y += len(SIZE_OPTS) * dd_option_h
+        y += 8
+        # Plane type and model (if Plane)
         if dt == "Plane":
-            t = font.render("Plane: [War] [Civil]", True, (180, 180, 180))
-            surf.blit(t, (10, y))
-            b_war = pygame.Rect(10, y + 18, 60, 22)
-            b_civil = pygame.Rect(74, y + 18, 60, 22)
-            buttons.append(("plane_war", b_war))
-            buttons.append(("plane_civil", b_civil))
-            y += 44
+            r_ptype = draw_dropdown_box(y + 20, "Plane type:", "War" if plane_war else "Civil")
+            buttons.append(("dropdown_plane_type", r_ptype))
+            y += 20 + dd_box_h
+            if dropdown_open == "plane_type":
+                for i, (label) in enumerate(["War", "Civil"]):
+                    ropt = pygame.Rect(10, y + i * dd_option_h, dd_box_w, dd_option_h)
+                    sel = (i == 0 and plane_war) or (i == 1 and not plane_war)
+                    pygame.draw.rect(surf, dd_highlight if sel else dd_bg, ropt)
+                    pygame.draw.rect(surf, (80, 82, 86), ropt, 1)
+                    surf.blit(font.render(label, True, (220, 220, 220)), (14, ropt.y + 3))
+                    buttons.append((f"choice_plane_type_{i}", ropt))
+                y += 2 * dd_option_h
+            y += 8
             models = PLANE_MODELS_WAR if plane_war else PLANE_MODELS_CIVIL
-            name = models[plane_model_idx][0] if plane_model_idx < len(models) else "Custom"
-            t = font.render(f"  {name} < >", True, (200, 200, 200))
-            surf.blit(t, (10, y))
-            b_pleft = pygame.Rect(10, y - 2, 24, 22)
-            b_pright = pygame.Rect(36, y - 2, 24, 22)
-            buttons.append(("plane_left", b_pleft))
-            buttons.append(("plane_right", b_pright))
-            y += 28
+            model_name = models[plane_model_idx][0] if plane_model_idx < len(models) else "Custom"
+            r_model = draw_dropdown_box(y + 20, "Plane model:", model_name)
+            buttons.append(("dropdown_plane_model", r_model))
+            y += 20 + dd_box_h
+            if dropdown_open == "plane_model":
+                for i in range(len(models)):
+                    ropt = pygame.Rect(10, y + i * dd_option_h, dd_box_w, dd_option_h)
+                    pygame.draw.rect(surf, dd_highlight if i == plane_model_idx else dd_bg, ropt)
+                    pygame.draw.rect(surf, (80, 82, 86), ropt, 1)
+                    surf.blit(font.render(models[i][0], True, (220, 220, 220)), (14, ropt.y + 3))
+                    buttons.append((f"choice_plane_model_{i}", ropt))
+                y += len(models) * dd_option_h
+            y += 8
         y += 10
         # Start mission
         b_go = pygame.Rect(10, y, 180, 36)
@@ -285,9 +359,9 @@ def main():
         return buttons
 
     def global_buttons(buttons_list, panel_y_offset=0):
-        """Convert panel-relative buttons to screen coords."""
+        """Convert panel-relative buttons to screen coords (panel on left at x=0)."""
         out = []
-        px = map_width
+        px = 0
         for name, r in buttons_list:
             out.append((name, pygame.Rect(px + r.x, r.y + panel_y_offset, r.w, r.h)))
         return out
@@ -314,76 +388,100 @@ def main():
             if e.type == pygame.MOUSEBUTTONDOWN:
                 x, y = e.pos
                 if e.button == 1:
-                    if x < map_width and not mission_plan:
+                    # Map is on the right: x in [PANEL_WIDTH, PANEL_WIDTH + map_width]
+                    map_x, map_y = x - PANEL_WIDTH, y
+                    if PANEL_WIDTH <= x < PANEL_WIDTH + map_width and not mission_plan:
                         if mode == "set_start":
-                            start_lat, start_lon = map_view.screen_to_lat_lon(x, y)
-                            waypoints = [(start_lat, start_lon)]
+                            start_lat, start_lon = map_view.screen_to_lat_lon(map_x, map_y)
+                            waypoints = [(start_lat, start_lon, default_altitude_m)]
                             mode = "add_waypoint"
                         elif mode == "add_waypoint":
-                            lat, lon = map_view.screen_to_lat_lon(x, y)
+                            lat, lon = map_view.screen_to_lat_lon(map_x, map_y)
                             if start_lat is None:
                                 start_lat, start_lon = lat, lon
-                                waypoints = [(lat, lon)]
+                                waypoints = [(lat, lon, default_altitude_m)]
                             else:
-                                waypoints.append((lat, lon))
-                    else:
+                                waypoints.append((lat, lon, default_altitude_m))
+                    elif x < PANEL_WIDTH:
                         for name, r in global_buttons(buttons, 0):
                             if r.collidepoint(x, y):
                                 if name == "tab_0":
                                     viz_mode = 0
+                                    dropdown_open = None
                                 elif name == "tab_1":
                                     viz_mode = 1
+                                    dropdown_open = None
                                 elif name == "tab_2":
                                     viz_mode = 2
+                                    dropdown_open = None
                                 elif name == "plan_spacecraft":
+                                    dropdown_open = None
                                     tgt = [(wp[0], wp[1], 1.0) for wp in waypoints] if waypoints else [(52.5, 4.5, 1.0), (53.0, 5.0, 1.0)]
                                     spacecraft_result = run_spacecraft_to_outputs(tgt, station=(station_lat, station_lon), schedule_days=7, save=True)
                                 elif name == "run_full":
+                                    dropdown_open = None
                                     cfg = DroneConfig(DRONE_TYPES[drone_type_idx], weight_kg, size_m, "Custom", plane_war)
                                     params = cfg.to_aircraft_params()
                                     params["energy_budget"] = 2e6
                                     params["consumption_per_second"] = 80.0
+                                    params["min_altitude_m"] = 0.0
+                                    params["max_altitude_m"] = 4000.0
+                                    params["default_altitude_m"] = default_altitude_m
+                                    wps_full = [(wp[0], wp[1], wp[2] if len(wp) >= 3 else default_altitude_m) for wp in waypoints]
                                     tgt = [(wp[0], wp[1], 1.0) for wp in waypoints] if len(waypoints) >= 2 else [(52.5, 4.5, 1.0), (53.0, 5.0, 1.0)]
-                                    ac, sc = run_full_pipeline(waypoints, params, spacecraft_targets=tgt, station=(station_lat, station_lon))
+                                    ac, sc = run_full_pipeline(wps_full, params, spacecraft_targets=tgt, station=(station_lat, station_lon))
                                     pipeline_message = "Aircraft: " + ("saved" if ac else "skip (need 2+ waypoints)") + "\nSpacecraft: saved to outputs/"
                                 elif name == "set_start":
                                     mode = "set_start"
+                                    dropdown_open = None
                                 elif name == "add_wp":
                                     mode = "add_waypoint"
+                                    dropdown_open = None
                                 elif name == "clear":
                                     waypoints = []
                                     start_lat = start_lon = None
                                     mission_plan = None
                                     aircraft_result = None
-                                elif name == "drone_left":
-                                    drone_type_idx = (drone_type_idx - 1) % len(DRONE_TYPES)
-                                elif name == "drone_right":
-                                    drone_type_idx = (drone_type_idx + 1) % len(DRONE_TYPES)
-                                elif name == "plane_left":
-                                    models = PLANE_MODELS_WAR if plane_war else PLANE_MODELS_CIVIL
-                                    plane_model_idx = (plane_model_idx - 1) % max(len(models), 1)
-                                    if models:
-                                        weight_kg, size_m = models[plane_model_idx][1], models[plane_model_idx][2]
-                                elif name == "plane_right":
-                                    models = PLANE_MODELS_WAR if plane_war else PLANE_MODELS_CIVIL
-                                    plane_model_idx = (plane_model_idx + 1) % max(len(models), 1)
-                                    if models:
-                                        weight_kg, size_m = models[plane_model_idx][1], models[plane_model_idx][2]
-                                elif name == "weight_min":
-                                    weight_kg = max(0.1, weight_kg - 1)
-                                elif name == "weight_plus":
-                                    weight_kg = min(50000, weight_kg + 1)
-                                elif name == "size_min":
-                                    size_m = max(0.1, size_m - 0.5)
-                                elif name == "size_plus":
-                                    size_m = min(100, size_m + 0.5)
-                                elif name == "plane_war":
-                                    plane_war = True
+                                    dropdown_open = None
+                                elif name == "dropdown_drone_type":
+                                    dropdown_open = "drone_type" if dropdown_open != "drone_type" else None
+                                elif name.startswith("choice_drone_"):
+                                    drone_type_idx = int(name.split("_")[-1])
+                                    dropdown_open = None
+                                elif name == "dropdown_weight":
+                                    dropdown_open = "weight" if dropdown_open != "weight" else None
+                                elif name.startswith("choice_weight_"):
+                                    weight_kg = WEIGHT_OPTS[int(name.split("_")[-1])]
+                                    dropdown_open = None
+                                elif name == "dropdown_size":
+                                    dropdown_open = "size" if dropdown_open != "size" else None
+                                elif name.startswith("choice_size_"):
+                                    size_m = SIZE_OPTS[int(name.split("_")[-1])]
+                                    dropdown_open = None
+                                elif name == "dropdown_plane_type":
+                                    dropdown_open = "plane_type" if dropdown_open != "plane_type" else None
+                                elif name.startswith("choice_plane_type_"):
+                                    plane_war = int(name.split("_")[-1]) == 0
                                     plane_model_idx = 0
-                                elif name == "plane_civil":
-                                    plane_war = False
-                                    plane_model_idx = 0
+                                    if PLANE_MODELS_WAR if plane_war else PLANE_MODELS_CIVIL:
+                                        weight_kg = (PLANE_MODELS_WAR if plane_war else PLANE_MODELS_CIVIL)[0][1]
+                                        size_m = (PLANE_MODELS_WAR if plane_war else PLANE_MODELS_CIVIL)[0][2]
+                                    dropdown_open = None
+                                elif name == "dropdown_plane_model":
+                                    dropdown_open = "plane_model" if dropdown_open != "plane_model" else None
+                                elif name.startswith("choice_plane_model_"):
+                                    plane_model_idx = int(name.split("_")[-1])
+                                    models = PLANE_MODELS_WAR if plane_war else PLANE_MODELS_CIVIL
+                                    if plane_model_idx < len(models):
+                                        weight_kg, size_m = models[plane_model_idx][1], models[plane_model_idx][2]
+                                    dropdown_open = None
+                                elif name == "dropdown_altitude":
+                                    dropdown_open = "altitude" if dropdown_open != "altitude" else None
+                                elif name.startswith("choice_altitude_"):
+                                    default_altitude_m = ALTITUDE_OPTS[int(name.split("_")[-1])]
+                                    dropdown_open = None
                                 elif name == "start_mission" and mission_plan is None and len(waypoints) >= 2:
+                                    dropdown_open = None
                                     cfg = DroneConfig(
                                         drone_type=DRONE_TYPES[drone_type_idx],
                                         weight_kg=weight_kg,
@@ -394,25 +492,31 @@ def main():
                                     params = cfg.to_aircraft_params()
                                     params["energy_budget"] = 2e6
                                     params["consumption_per_second"] = 80.0
-                                    mission_plan = run_mission(waypoints, params)
+                                    params["min_altitude_m"] = 0.0
+                                    params["max_altitude_m"] = 4000.0
+                                    params["default_altitude_m"] = default_altitude_m
+                                    # Ensure waypoints are (lat, lon, alt_m)
+                                    wps_for_mission = [(wp[0], wp[1], wp[2] if len(wp) >= 3 else default_altitude_m) for wp in waypoints]
+                                    mission_plan = run_mission(wps_for_mission, params)
                                     if mission_plan:
-                                        mission_start_time = time.time()
                                         try:
-                                            waypoint_elevations = get_elevations_bulk(waypoints)
-                                            waypoint_weather = get_weather_for_waypoints(waypoints)
+                                            waypoint_elevations = get_elevations_bulk([(wp[0], wp[1]) for wp in waypoints])
+                                            waypoint_weather = get_weather_for_waypoints([(wp[0], wp[1]) for wp in waypoints])
                                         except Exception:
                                             waypoint_elevations = []
                                             waypoint_weather = []
-                                        aircraft_result = run_aircraft_to_outputs(waypoints, params, save=True)
+                                        aircraft_result = run_aircraft_to_outputs(wps_for_mission, params, save=True)
+                                        mission_start_time = time.time()  # Start replay after blocking calls so plane animates from start
                                     else:
                                         mission_plan = {}
                                         aircraft_result = None
                                 break
-                elif e.button == 4 and x < map_width:
+                elif e.button == 4 and PANEL_WIDTH <= x < PANEL_WIDTH + map_width:
                     map_view.zoom_in()
-                elif e.button == 5 and x < map_width:
+                elif e.button == 5 and PANEL_WIDTH <= x < PANEL_WIDTH + map_width:
                     map_view.zoom_out()
-            if e.type == pygame.MOUSEMOTION and e.buttons[0] and 0 <= e.pos[0] < map_width:
+            # Left mouse button: hold and drag to pan the map (grab and move)
+            if e.type == pygame.MOUSEMOTION and e.buttons[0] and PANEL_WIDTH <= e.pos[0] < PANEL_WIDTH + map_width:
                 map_view.pan(-e.rel[0], -e.rel[1])
 
         # Update flight position for replay
@@ -429,18 +533,22 @@ def main():
             current_flight_pos = None
             current_flight_idx = -1
 
-        # Draw
-        screen.fill((30, 30, 30))
-        map_view.draw(screen)
+        # Draw: panel on left, map on right
+        screen.fill((40, 42, 46))
+        # Map area (right side)
+        map_surf = screen.subsurface(map_rect())
+        map_surf.fill((30, 30, 30))
+        map_view.draw(map_surf)
         all_wps = waypoints if waypoints else []
         if mission_plan and mission_plan.get("waypoints"):
-            map_view.draw_waypoints(screen, mission_plan["waypoints"], start_idx=0, current_idx=current_flight_idx)
+            map_view.draw_waypoints(map_surf, mission_plan["waypoints"], start_idx=0, current_idx=current_flight_idx)
         else:
-            map_view.draw_waypoints(screen, all_wps, start_idx=0, current_idx=-1)
+            map_view.draw_waypoints(map_surf, all_wps, start_idx=0, current_idx=-1)
         if current_flight_pos:
             pt = map_view.lat_lon_to_screen(current_flight_pos[0], current_flight_pos[1])
-            pygame.draw.circle(screen, (255, 200, 0), pt, 12)
-            pygame.draw.circle(screen, (255, 255, 255), pt, 12, 3)
+            pygame.draw.circle(map_surf, (255, 200, 0), pt, 12)
+            pygame.draw.circle(map_surf, (255, 255, 255), pt, 12, 3)
+        # Panel (left side)
         buttons = draw_panel()
         pygame.display.flip()
         clock.tick(FPS)

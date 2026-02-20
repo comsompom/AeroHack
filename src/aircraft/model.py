@@ -61,10 +61,38 @@ def turn_angle_deg(heading_from: float, heading_to: float) -> float:
     return d
 
 
+def waypoint_altitude(wp: Tuple) -> float:
+    """Return altitude in meters from waypoint (lat, lon) or (lat, lon, alt_m). Default 100 m."""
+    if len(wp) >= 3:
+        return float(wp[2])
+    return 100.0
+
+
+def correct_waypoint_altitudes(
+    waypoints: List[Tuple],
+    min_altitude_m: float,
+    max_altitude_m: float,
+    default_altitude_m: float = 100.0,
+) -> List[Tuple[float, float, float]]:
+    """
+    Normalize waypoints to (lat, lon, alt_m) and clamp altitudes to aircraft envelope.
+    If altitude is missing or outside [min_altitude_m, max_altitude_m], it is set to the nearest limit or default.
+    Waypoint = (lat, lon) or (lat, lon, alt_m). Returns list of (lat, lon, alt_m).
+    """
+    out = []
+    for wp in waypoints:
+        lat, lon = float(wp[0]), float(wp[1])
+        alt = waypoint_altitude(wp) if len(wp) >= 3 else default_altitude_m
+        alt = max(min_altitude_m, min(max_altitude_m, alt))
+        out.append((lat, lon, alt))
+    return out
+
+
 class AircraftModel:
     """
     Point-mass kinematics with turn rate limit and energy consumption.
     Wind is provided by a callable wind(t, lat, lon) -> (v_north, v_east) m/s.
+    Altitude limits define the operating envelope; waypoint altitudes are checked and corrected to stay within them.
     """
 
     def __init__(
@@ -74,12 +102,18 @@ class AircraftModel:
         energy_budget: float = 1e6,
         consumption_per_second: float = 100.0,
         turn_penalty_per_deg: float = 2.0,
+        min_altitude_m: float = 0.0,
+        max_altitude_m: float = 4000.0,
+        default_altitude_m: float = 100.0,
     ):
         self.cruise_speed_ms = cruise_speed_ms
         self.max_turn_rate_degs = max_turn_rate_degs
         self.energy_budget = energy_budget
         self.consumption_per_second = consumption_per_second
         self.turn_penalty_per_deg = turn_penalty_per_deg
+        self.min_altitude_m = min_altitude_m
+        self.max_altitude_m = max_altitude_m
+        self.default_altitude_m = default_altitude_m
 
     def wind_nominal(self, t: float, lat: float, lon: float) -> Tuple[float, float]:
         """Default wind: zero. Override or pass different callable for time/spatial wind."""

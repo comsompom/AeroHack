@@ -12,7 +12,23 @@ def _get_waypoints(plan: Any) -> List[Tuple[float, float]]:
     """Extract list of (lat, lon) from aircraft plan. Plan is dict with 'waypoints' key."""
     if not isinstance(plan, dict):
         return []
-    return list(plan.get("waypoints", []))
+    wps = list(plan.get("waypoints", []))
+    return [(p[0], p[1]) for p in wps]
+
+
+def _get_waypoints_with_alt(plan: Any) -> List[Tuple[float, float, float]]:
+    """Extract list of (lat, lon, alt_m) from plan. Prefer waypoints_with_altitude; else waypoints with default alt."""
+    if not isinstance(plan, dict):
+        return []
+    with_alt = plan.get("waypoints_with_altitude")
+    if with_alt:
+        return list(with_alt)
+    wps = list(plan.get("waypoints", []))
+    default_alt = 100.0
+    model = plan.get("_model")
+    if model and getattr(model, "default_altitude_m", None) is not None:
+        default_alt = model.default_altitude_m
+    return [(p[0], p[1], p[2] if len(p) >= 3 else default_alt) for p in wps]
 
 
 def _get_model(plan: Any) -> AircraftModel:
@@ -120,3 +136,25 @@ class GeofenceConstraint(Constraint):
         if violations > 0:
             return False, float(violations)
         return True, 0.0
+
+
+class AltitudeConstraint(Constraint):
+    """Waypoint altitudes must be within aircraft min/max altitude (after correction)."""
+
+    def __init__(self, model: AircraftModel):
+        self.model = model
+
+    def check(self, plan: Any) -> Tuple[bool, float]:
+        waypoints_3d = _get_waypoints_with_alt(plan)
+        if not waypoints_3d:
+            return True, 0.0
+        min_alt = self.model.min_altitude_m
+        max_alt = self.model.max_altitude_m
+        violation = 0.0
+        for wp in waypoints_3d:
+            alt = wp[2]
+            if alt < min_alt:
+                violation += min_alt - alt
+            elif alt > max_alt:
+                violation += alt - max_alt
+        return (violation == 0.0, violation)

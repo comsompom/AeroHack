@@ -2,7 +2,12 @@
 import pytest
 
 from src.aircraft.model import AircraftModel
-from src.aircraft.constraints import EnduranceConstraint, GeofenceConstraint, ManeuverConstraint
+from src.aircraft.constraints import (
+    EnduranceConstraint,
+    GeofenceConstraint,
+    ManeuverConstraint,
+    AltitudeConstraint,
+)
 
 
 def test_endurance_feasible():
@@ -46,3 +51,30 @@ def test_geofence_inside():
     ok, v = c.check(plan)
     assert ok is False
     assert v >= 1
+
+
+def test_altitude_constraint_feasible():
+    model = AircraftModel(min_altitude_m=0.0, max_altitude_m=4000.0)
+    plan = {"waypoints_with_altitude": [(52.0, 4.0, 100.0), (52.1, 4.0, 500.0)], "waypoints": [(52.0, 4.0), (52.1, 4.0)], "_model": model}
+    c = AltitudeConstraint(model)
+    ok, v = c.check(plan)
+    assert ok is True
+    assert v == 0.0
+
+
+def test_altitude_constraint_violation_high():
+    model = AircraftModel(min_altitude_m=0.0, max_altitude_m=4000.0)
+    plan = {"waypoints_with_altitude": [(52.0, 4.0, 5000.0)], "waypoints": [(52.0, 4.0)], "_model": model}
+    c = AltitudeConstraint(model)
+    ok, v = c.check(plan)
+    assert ok is False
+    assert v > 0
+
+
+def test_altitude_constraint_violation_low():
+    model = AircraftModel(min_altitude_m=100.0, max_altitude_m=4000.0)
+    plan = {"waypoints_with_altitude": [(52.0, 4.0, 50.0)], "waypoints": [(52.0, 4.0)], "_model": model}
+    c = AltitudeConstraint(model)
+    ok, v = c.check(plan)
+    assert ok is False
+    assert v > 0
