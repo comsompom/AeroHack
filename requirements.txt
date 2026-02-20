@@ -11,3 +11,6 @@ pytest-cov>=4.0
 
 # Web app (optional for planning-only runs)
 flask>=2.0
+
+# Pygame mission viz (separate window: map, waypoints, real-time flight)
+pygame>=2.0

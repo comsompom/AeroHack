@@ -77,6 +77,18 @@ Then open **http://127.0.0.1:5000** in a browser. The app reads from `outputs/` 
 1. Run `python -m src.run_all` again (overwrites `outputs/*.json`).
 2. Restart the web app and refresh the page to see updated data.
 
+### 6. Pygame mission visualization (optional)
+
+A **separate Pygame window** provides a real-world map (zoom/pan), click-to-set start and waypoints, elevation (Open-Elevation; [ArduPilot terrain](https://terrain.ardupilot.org/continentsdat3/) can be used with local data), real-time weather per waypoint (Open-Meteo), drone type (UAV / Plane / Spacecraft / Quadcopter), weight/size and plane models (war/civil), and **Start mission** with real-time flight replay on the map.
+
+```bash
+pip install pygame
+# From project root, with PYTHONPATH set (see §2):
+python pygame_viz/main.py
+```
+
+See `pygame_viz/README.md` for full usage.
+
 ## Quick reference
 
 | Command | Purpose |
@@ -84,7 +96,8 @@ Then open **http://127.0.0.1:5000** in a browser. The app reads from `outputs/` 
 | `python -m src.run_all` | Run aircraft + spacecraft planning; write `outputs/` |
 | `pytest tests/ -v` | Run all unit tests |
 | `pytest tests/ --cov=src --cov-report=html` | Tests + coverage report |
-| `python webapp/app.py` | Start visualization at http://127.0.0.1:5000 |
+| `python webapp/app.py` | Start Flask visualization at http://127.0.0.1:5000 |
+| `python pygame_viz/main.py` | Start Pygame map viz (waypoints, mission replay) |
 
 ## Requirements
 
