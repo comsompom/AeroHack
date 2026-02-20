@@ -98,7 +98,24 @@ All configurable mission variables live in one file so you can change missions w
 - `outputs/` — Generated plans (JSON), plots, CSV
 - `tests/` — Unit tests (core, aircraft, spacecraft, webapp, mission_settings, run_all, pygame_viz, validation)
 - `validation/` — Monte-Carlo script
-- `docs/` — Report, figures
+- `docs/` — Technical report (PDF), figures
+
+---
+
+## Technical report and validation results
+
+### Short technical report (PDF)
+
+A short technical report is provided in **`docs/technical_report.pdf`**. It summarizes architecture, mission settings, planning formulation, and outputs for both aircraft and spacecraft modules. To regenerate: `python docs/generate_technical_report.py` (requires `reportlab`).
+
+### Validation results (plots, tests, metrics)
+
+- **Monte-Carlo** — Run `python validation/run_monte_carlo.py` (from project root with `PYTHONPATH` set). Prints success rate and total-time range over multiple wind seeds; these metrics validate robustness under wind uncertainty.
+- **Unit tests** — `pytest tests/ -v` runs the full test suite; all tests should pass. Results are the standard pytest output (passed/failed counts per module).
+- **Coverage report** — `pytest tests/ --cov=src --cov=pygame_viz --cov=webapp --cov-report=html` generates `htmlcov/index.html` with line coverage per package.
+- **Output plots** — After `python -m src.run_all`: `outputs/aircraft_mission_plot.png` (flight path and state vs time) and any spacecraft/validation figures you save under `outputs/` or `docs/`.
+
+Use these for deliverables: attach the PDF report and, for validation evidence, the Monte-Carlo console output, a pytest run log, the coverage report, and selected plots from `outputs/`.
 
 ---
 

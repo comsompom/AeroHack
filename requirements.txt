@@ -14,3 +14,6 @@ flask>=2.0
 
 # Pygame mission viz (separate window: map, waypoints, real-time flight)
 pygame>=2.0
+
+# PDF technical report (docs/generate_technical_report.py)
+reportlab>=3.6
