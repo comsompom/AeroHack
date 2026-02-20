@@ -19,7 +19,7 @@ from pygame_viz.weather import get_weather_for_waypoints
 from pygame_viz.config import DRONE_TYPES, PLANE_MODELS_WAR, PLANE_MODELS_CIVIL, DroneConfig
 from pygame_viz.mission_runner import run_mission, interpolate_position, interpolate_energy
 from pygame_viz.pipeline import run_aircraft_to_outputs, run_spacecraft_to_outputs, run_full_pipeline
-from pygame_viz.spacecraft_view import draw_spacecraft_view
+from pygame_viz.spacecraft_view import draw_spacecraft_view, screen_to_earth_lat_lon
 
 # Layout
 MAP_WIDTH = 900
@@ -63,7 +63,11 @@ def main():
     spacecraft_result = None  # 7-day schedule result
     pipeline_message = ""  # "Run full" status
     viz_mode = 0  # 0=Aircraft, 1=Spacecraft, 2=Run full
-    station_lat, station_lon = 52.0, 4.0  # ground station for spacecraft
+    station_lat, station_lon = 52.0, 4.0  # launch point (ground station) for spacecraft
+    spacecraft_orbit_alt_km = 400.0  # orbit altitude in km (editable in spacecraft panel)
+    spacecraft_launch_weather = None  # cached weather at launch; refreshed when showing spacecraft tab
+    spacecraft_weather_ts = 0.0  # time of last weather fetch
+    spacecraft_earth_rotation_rad = 0.0  # drag to rotate Earth (longitude offset)
     dropdown_open = None  # None | "drone_type" | "weight" | "size" | "plane_type" | "plane_model"
     panel_scroll_y = 0  # scroll offset for left settings panel
     panel_content_height = WIN_H  # set by draw_panel
@@ -119,10 +123,66 @@ def main():
                 t = font.render(f"  {lat:.2f}, {lon:.2f}", True, (200, 200, 200))
                 surf.blit(t, (10, y))
                 y += 18
-            y += 6
-            t = font.render(f"Station: {station_lat:.2f}, {station_lon:.2f}", True, (180, 180, 180))
+            y += 8
+            t = font.render("Drag globe to rotate. Click globe to set launch.", True, (140, 160, 180))
             surf.blit(t, (10, y))
-            y += 24
+            y += 18
+            t = font.render("Launch point (lat, lon):", True, (180, 180, 180))
+            surf.blit(t, (10, y))
+            y += 20
+            t = font.render(f"  {station_lat:.2f}, {station_lon:.2f}", True, (200, 220, 200))
+            surf.blit(t, (10, y))
+            y += 18
+            # Lat/Lon adjust buttons: lat- lat+ lon- lon+
+            bw, bh = 36, 22
+            by = y
+            b_la = pygame.Rect(10, by, bw, bh)
+            b_lb = pygame.Rect(10 + bw + 2, by, bw, bh)
+            b_lo = pygame.Rect(10 + (bw + 2) * 2, by, bw, bh)
+            b_lp = pygame.Rect(10 + (bw + 2) * 3, by, bw, bh)
+            for r, label in [(b_la, "lat-"), (b_lb, "lat+"), (b_lo, "lon-"), (b_lp, "lon+")]:
+                pygame.draw.rect(surf, (70, 90, 110), r)
+                surf.blit(font.render(label, True, (255, 255, 255)), (r.x + 2, r.y + 3))
+            buttons.append(("launch_lat_down", b_la))
+            buttons.append(("launch_lat_up", b_lb))
+            buttons.append(("launch_lon_down", b_lo))
+            buttons.append(("launch_lon_up", b_lp))
+            y += bh + 4
+            b_set_launch = pygame.Rect(10, y, 140, 24)
+            pygame.draw.rect(surf, (60, 100, 80), b_set_launch)
+            t = font.render("Set from start", True, (255, 255, 255))
+            surf.blit(t, (b_set_launch.x + 8, b_set_launch.y + 4))
+            buttons.append(("set_launch_from_start", b_set_launch))
+            y += 30
+            t = font.render("Orbit altitude (km):", True, (180, 180, 180))
+            surf.blit(t, (10, y))
+            y += 20
+            r_alt = pygame.Rect(10, y, 80, 22)
+            pygame.draw.rect(surf, (50, 52, 56), r_alt)
+            pygame.draw.rect(surf, (100, 102, 106), r_alt, 1)
+            surf.blit(font.render(f"{spacecraft_orbit_alt_km:.0f}", True, (220, 220, 220)), (14, y + 3))
+            b_alt_up = pygame.Rect(92, y, 24, 22)
+            b_alt_dn = pygame.Rect(118, y, 24, 22)
+            pygame.draw.rect(surf, (70, 90, 110), b_alt_up)
+            pygame.draw.rect(surf, (70, 90, 110), b_alt_dn)
+            surf.blit(font.render("+", True, (255, 255, 255)), (b_alt_up.x + 7, b_alt_up.y + 2))
+            surf.blit(font.render("-", True, (255, 255, 255)), (b_alt_dn.x + 8, b_alt_dn.y + 2))
+            buttons.append(("orbit_alt_up", b_alt_up))
+            buttons.append(("orbit_alt_dn", b_alt_dn))
+            y += 28
+            # Weather at launch (cached)
+            t = font.render("Weather at launch:", True, (180, 180, 180))
+            surf.blit(t, (10, y))
+            y += 18
+            if spacecraft_launch_weather:
+                w = spacecraft_launch_weather
+                line = f"  {w.get('temperature', '—')}°C, wind {w.get('windspeed', 0):.0f} km/h"
+                t = font.render(line, True, (200, 220, 200))
+                surf.blit(t, (10, y))
+            else:
+                t = font.render("  (fetching…)", True, (150, 150, 150))
+                surf.blit(t, (10, y))
+            y += 22
             b_plan = pygame.Rect(10, y, 160, 30)
             pygame.draw.rect(surf, (80, 60, 120), b_plan)
             t = font.render("Plan 7-day + Save", True, (255, 255, 255))
@@ -426,12 +486,20 @@ def main():
                 if e.button == 1:
                     # Map is on the right: x in [PANEL_WIDTH, PANEL_WIDTH + map_width]
                     map_x, map_y = x - PANEL_WIDTH, y
-                    if PANEL_WIDTH <= x < PANEL_WIDTH + map_width and not mission_plan:
-                        if mode == "set_start":
+                    if PANEL_WIDTH <= x < PANEL_WIDTH + map_width:
+                        if viz_mode == 1:
+                            # Spacecraft tab: click on Earth to set launch point
+                            pt = screen_to_earth_lat_lon(
+                                map_x, map_y, map_width, win_h, spacecraft_earth_rotation_rad
+                            )
+                            if pt is not None:
+                                station_lat, station_lon = pt[0], pt[1]
+                                spacecraft_launch_weather = None
+                        elif not mission_plan and mode == "set_start":
                             start_lat, start_lon = map_view.screen_to_lat_lon(map_x, map_y)
                             waypoints = [(start_lat, start_lon, default_altitude_m)]
                             mode = "add_waypoint"
-                        elif mode == "add_waypoint":
+                        elif not mission_plan and mode == "add_waypoint":
                             lat, lon = map_view.screen_to_lat_lon(map_x, map_y)
                             if start_lat is None:
                                 start_lat, start_lon = lat, lon
@@ -451,6 +519,37 @@ def main():
                                     dropdown_open = None
                                 elif name == "tab_2":
                                     viz_mode = 2
+                                    dropdown_open = None
+                                elif name == "set_launch_from_start":
+                                    if start_lat is not None and start_lon is not None:
+                                        station_lat, station_lon = start_lat, start_lon
+                                        spacecraft_launch_weather = None
+                                    dropdown_open = None
+                                elif name == "orbit_alt_up":
+                                    spacecraft_orbit_alt_km = min(2000.0, spacecraft_orbit_alt_km + 50.0)
+                                    dropdown_open = None
+                                elif name == "orbit_alt_dn":
+                                    spacecraft_orbit_alt_km = max(200.0, spacecraft_orbit_alt_km - 50.0)
+                                    dropdown_open = None
+                                elif name == "launch_lat_up":
+                                    station_lat = min(90.0, station_lat + 0.5)
+                                    spacecraft_launch_weather = None
+                                    dropdown_open = None
+                                elif name == "launch_lat_down":
+                                    station_lat = max(-90.0, station_lat - 0.5)
+                                    spacecraft_launch_weather = None
+                                    dropdown_open = None
+                                elif name == "launch_lon_up":
+                                    station_lon = (station_lon + 0.5) % 360.0
+                                    if station_lon > 180:
+                                        station_lon -= 360
+                                    spacecraft_launch_weather = None
+                                    dropdown_open = None
+                                elif name == "launch_lon_down":
+                                    station_lon = (station_lon - 0.5) % 360.0
+                                    if station_lon > 180:
+                                        station_lon -= 360
+                                    spacecraft_launch_weather = None
                                     dropdown_open = None
                                 elif name == "plan_spacecraft":
                                     dropdown_open = None
@@ -580,10 +679,14 @@ def main():
                         panel_scroll_y = min(max(0, panel_content_height - win_h), panel_scroll_y + SCROLL_STEP)
                     elif PANEL_WIDTH <= x < PANEL_WIDTH + map_width:
                         map_view.zoom_out()
-            # Left or right mouse button: hold and drag to pan the map
+            # Left or right mouse button: drag to pan map (Aircraft) or rotate Earth (Spacecraft)
             if e.type == pygame.MOUSEMOTION and PANEL_WIDTH <= e.pos[0] < PANEL_WIDTH + map_width:
-                if e.buttons[0] or e.buttons[2]:  # left or right button drag
-                    map_view.pan(-e.rel[0], -e.rel[1])
+                if e.buttons[0] or e.buttons[2]:
+                    if viz_mode == 1:
+                        spacecraft_earth_rotation_rad += e.rel[0] * 0.008
+                        spacecraft_earth_rotation_rad = spacecraft_earth_rotation_rad % (2 * 3.14159265359)
+                    else:
+                        map_view.pan(-e.rel[0], -e.rel[1])
 
         # Update flight position for replay (plane/drone moves along planned route; check fuel/battery)
         if mission_plan and mission_start_time is not None and mission_plan.get("timestamps"):
@@ -615,13 +718,26 @@ def main():
             current_flight_pos = None
             current_flight_idx = -1
 
+        # Refresh weather at launch when on spacecraft tab (cached 120s)
+        if viz_mode == 1 and (spacecraft_launch_weather is None or time.time() - spacecraft_weather_ts > 120):
+            try:
+                wlist = get_weather_for_waypoints([(station_lat, station_lon)])
+                if wlist:
+                    spacecraft_launch_weather = wlist[0]
+                    spacecraft_weather_ts = time.time()
+            except Exception:
+                pass
         # Draw: panel on left, map or spacecraft view on right
         screen.fill((40, 42, 46))
         map_surf = screen.subsurface(map_rect())
         map_surf.fill((30, 30, 30))
         if viz_mode == 1:
             # Spacecraft tab: full Earth with launch point and spacecraft in orbit
-            draw_spacecraft_view(map_surf, map_width, win_h, station_lat, station_lon, orbit_altitude_km=400.0)
+            draw_spacecraft_view(
+                map_surf, map_width, win_h, station_lat, station_lon,
+                orbit_altitude_km=spacecraft_orbit_alt_km,
+                earth_rotation_rad=spacecraft_earth_rotation_rad,
+            )
         else:
             # Aircraft or Run full: 2D map
             map_view.draw(map_surf)

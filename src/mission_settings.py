@@ -21,7 +21,11 @@ AIRCRAFT_WAYPOINTS: List[Tuple[float, ...]] = [
 # Aircraft model parameters
 AIRCRAFT_CRUISE_SPEED_MS = 25.0
 AIRCRAFT_MAX_TURN_RATE_DEGS = 15.0
-AIRCRAFT_ENERGY_BUDGET = 2e6
+# Energy: use battery for drones (UAV) and fuel tank for planes. Consumption applied to both.
+AIRCRAFT_ENERGY_BUDGET = 2e6  # fallback if type-specific not set
+AIRCRAFT_VEHICLE_TYPE = "Plane"  # "Plane" | "UAV" (drone)
+AIRCRAFT_FUEL_TANK_CAPACITY_J = 2e6   # fuel capacity (J) for planes
+AIRCRAFT_BATTERY_CAPACITY_J = 2e6    # battery capacity (J) for drones
 AIRCRAFT_CONSUMPTION_PER_SECOND = 80.0
 AIRCRAFT_MIN_ALTITUDE_M = 0.0
 AIRCRAFT_MAX_ALTITUDE_M = 4000.0

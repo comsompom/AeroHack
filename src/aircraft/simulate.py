@@ -21,11 +21,12 @@ def simulate_mission(
         return [], 0.0, 0.0, {"ok": True}
     wind = wind_fn or model.wind_nominal
     initial = AircraftState(waypoints[0][0], waypoints[0][1], 0.0, 0.0, 0.0)
-    states, total_time, total_energy = model.simulate_path(waypoints, initial, wind)
+    states, total_time, total_energy, crash_info = model.simulate_path(waypoints, initial, wind)
     checks = {
-        "energy_ok": total_energy <= model.energy_budget,
+        "energy_ok": total_energy <= model.energy_budget and crash_info is None,
         "total_time": total_time,
         "total_energy": total_energy,
+        "crash_depletion": crash_info,
     }
     return states, total_time, total_energy, checks
 

@@ -49,7 +49,7 @@ def _simulate_plan(plan: Any) -> Tuple[float, float, List[float], List[float], b
     initial = AircraftState(
         waypoints[0][0], waypoints[0][1], 0.0, 0.0, 0.0
     )
-    states, total_time, total_energy = model.simulate_path(
+    states, total_time, total_energy, _ = model.simulate_path(
         waypoints, initial, model.wind_nominal
     )
     turn_angles = []

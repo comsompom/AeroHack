@@ -54,7 +54,7 @@ class MinTimeObjective(Objective):
         if not model or len(waypoints) < 2:
             return 0.0
         initial = AircraftState(waypoints[0][0], waypoints[0][1], 0.0, 0.0, 0.0)
-        _, total_time, _ = model.simulate_path(waypoints, initial, model.wind_nominal)
+        _, total_time, _, _ = model.simulate_path(waypoints, initial, model.wind_nominal)
         return -total_time
 
 
@@ -104,7 +104,7 @@ def plan_aircraft_mission(
     plan["waypoints_with_altitude"] = ordered_3d
 
     initial = AircraftState(waypoints_out[0][0], waypoints_out[0][1], 0.0, 0.0, 0.0)
-    states, total_time, total_energy = model.simulate_path(
+    states, total_time, total_energy, _ = model.simulate_path(
         waypoints_out, initial, model.wind_nominal
     )
     timestamps = [s.t for s in states]

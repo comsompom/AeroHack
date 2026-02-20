@@ -185,16 +185,33 @@ class AircraftModel:
         waypoints: List[Tuple[float, float]],
         initial_state: AircraftState,
         wind_fn: Callable[[float, float, float], Tuple[float, float]],
-    ) -> Tuple[List[AircraftState], float, float]:
+    ) -> Tuple[List[AircraftState], float, float, dict | None]:
         """
         Simulate flying through waypoints in order.
-        Returns (list of states at each waypoint, total_time, total_energy).
+        Returns (list of states at each waypoint, total_time, total_energy, crash_info).
+        crash_info is None if energy never exceeds budget; else dict with depletion position and segment.
         """
         states = [initial_state]
+        crash_info = None
         for i in range(1, len(waypoints)):
+            lat0, lon0 = states[-1].lat, states[-1].lon
             lat1, lon1 = waypoints[i]
-            new_state, _dt, _de = self.fly_segment(states[-1], lat1, lon1, wind_fn)
+            new_state, dt, seg_energy = self.fly_segment(states[-1], lat1, lon1, wind_fn)
+            if crash_info is None and new_state.energy_used >= self.energy_budget and seg_energy > 0:
+                # Depletion occurred on this segment; interpolate crash position (for reporting)
+                e_before = states[-1].energy_used
+                frac = (self.energy_budget - e_before) / seg_energy
+                frac = max(0.0, min(1.0, frac))
+                crash_info = {
+                    "depleted": True,
+                    "segment_from_waypoint_index": i - 1,
+                    "segment_to_waypoint_index": i,
+                    "crash_lat": lat0 + frac * (lat1 - lat0),
+                    "crash_lon": lon0 + frac * (lon1 - lon0),
+                    "crash_t_s": states[-1].t + frac * dt,
+                    "energy_used_at_depletion": self.energy_budget,
+                }
             states.append(new_state)
         total_time = states[-1].t - initial_state.t
         total_energy = states[-1].energy_used - initial_state.energy_used
-        return states, total_time, total_energy
+        return states, total_time, total_energy, crash_info

@@ -62,6 +62,48 @@ def api_spacecraft():
     return data
 
 
+@app.route("/api/weather")
+def api_weather():
+    """Return current weather at lat, lon (query params). Same as Pygame weather at launch."""
+    try:
+        lat = float(request.args.get("lat", 52))
+        lon = float(request.args.get("lon", 4))
+        from pygame_viz.weather import get_weather
+        w = get_weather(lat, lon)
+        if w is None:
+            return jsonify({"error": "Weather unavailable"}), 503
+        return jsonify(w)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/plan_spacecraft", methods=["POST"])
+def api_plan_spacecraft():
+    """Run spacecraft plan with given station and altitude_km; save to outputs/. Same as Pygame Plan 7-day + Save."""
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        station = tuple(data.get("station") or [52.0, 4.0])[:2]
+        station = (float(station[0]), float(station[1]))
+        altitude_km = float(data.get("altitude_km", 400))
+        targets = data.get("targets")
+        if not targets:
+            from src.mission_settings import SPACECRAFT_TARGETS
+            targets = [list(t) for t in SPACECRAFT_TARGETS]
+        from pygame_viz.pipeline import run_spacecraft_to_outputs
+        out = run_spacecraft_to_outputs(
+            targets=targets,
+            station=station,
+            schedule_days=7,
+            save=True,
+            altitude_km=altitude_km,
+        )
+        if out is None:
+            return jsonify({"ok": False, "error": "Spacecraft plan failed"}), 500
+        return jsonify({"ok": True, "mission_value": out.get("mission_value")})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/api/settings")
 def api_settings():
     """Return current mission settings (same as Pygame: waypoints, model, spacecraft) from mission_settings."""
@@ -71,6 +113,7 @@ def api_settings():
             AIRCRAFT_CRUISE_SPEED_MS,
             AIRCRAFT_MAX_TURN_RATE_DEGS,
             AIRCRAFT_ENERGY_BUDGET,
+            AIRCRAFT_VEHICLE_TYPE,
             AIRCRAFT_CONSUMPTION_PER_SECOND,
             AIRCRAFT_MIN_ALTITUDE_M,
             AIRCRAFT_MAX_ALTITUDE_M,
@@ -87,6 +130,7 @@ def api_settings():
                 "cruise_speed_ms": AIRCRAFT_CRUISE_SPEED_MS,
                 "max_turn_rate_degs": AIRCRAFT_MAX_TURN_RATE_DEGS,
                 "energy_budget": AIRCRAFT_ENERGY_BUDGET,
+                "vehicle_type": AIRCRAFT_VEHICLE_TYPE,
                 "consumption_per_second": AIRCRAFT_CONSUMPTION_PER_SECOND,
                 "min_altitude_m": AIRCRAFT_MIN_ALTITUDE_M,
                 "max_altitude_m": AIRCRAFT_MAX_ALTITUDE_M,
@@ -102,6 +146,51 @@ def api_settings():
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/plan_aircraft", methods=["POST"])
+def api_plan_aircraft():
+    """Run aircraft plan with user-provided waypoints and params; save to outputs/. Same as Pygame Plan + Save."""
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        waypoints = data.get("waypoints")
+        if not waypoints or len(waypoints) < 2:
+            return jsonify({"ok": False, "error": "At least 2 waypoints required"}), 400
+        waypoints = [list(w)[:3] for w in waypoints]
+        for w in waypoints:
+            if len(w) == 2:
+                w.append(float(data.get("default_altitude_m", 100)))
+            w[0], w[1] = float(w[0]), float(w[1])
+            w[2] = float(w[2]) if len(w) > 2 else float(data.get("default_altitude_m", 100))
+
+        default_alt = float(data.get("default_altitude_m", 100))
+        vehicle_type = (data.get("vehicle_type") or "Plane").strip()
+        is_plane = vehicle_type.lower() in ("plane", "fixed-wing")
+        energy_budget = float(data.get("fuel_tank_capacity_j") or data.get("battery_capacity_j") or data.get("energy_budget") or 2e6)
+        consumption = float(data.get("consumption_per_second") or 80)
+
+        from src.mission_settings import (
+            AIRCRAFT_CRUISE_SPEED_MS,
+            AIRCRAFT_MAX_TURN_RATE_DEGS,
+            AIRCRAFT_MIN_ALTITUDE_M,
+            AIRCRAFT_MAX_ALTITUDE_M,
+        )
+        drone_params = {
+            "cruise_speed_ms": float(data.get("cruise_speed_ms") or AIRCRAFT_CRUISE_SPEED_MS),
+            "max_turn_rate_degs": float(data.get("max_turn_rate_degs") or AIRCRAFT_MAX_TURN_RATE_DEGS),
+            "energy_budget": energy_budget,
+            "consumption_per_second": consumption,
+            "min_altitude_m": float(data.get("min_altitude_m") or AIRCRAFT_MIN_ALTITUDE_M),
+            "max_altitude_m": float(data.get("max_altitude_m") or AIRCRAFT_MAX_ALTITUDE_M),
+            "default_altitude_m": default_alt,
+        }
+        from pygame_viz.pipeline import run_aircraft_to_outputs
+        out = run_aircraft_to_outputs(waypoints, drone_params, save=True)
+        if out is None:
+            return jsonify({"ok": False, "error": "Aircraft plan failed"}), 500
+        return jsonify({"ok": True, "total_time_s": out.get("total_time_s"), "total_energy": out.get("total_energy")})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/api/start_mission", methods=["POST"])

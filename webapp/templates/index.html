@@ -8,10 +8,11 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <style>
     * { box-sizing: border-box; }
-    body { font-family: system-ui, sans-serif; margin: 0; padding: 0; background: #0f1419; color: #e6edf3; height: 100vh; overflow: hidden; }
-    .app { display: flex; height: 100vh; }
-    .panel-left { width: 320px; min-width: 320px; background: #282a2e; border-right: 1px solid #30363d; overflow-y: auto; padding: 10px; }
-    .viz-right { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    html, body { font-family: system-ui, sans-serif; margin: 0; padding: 0; background: #0f1419; color: #e6edf3; min-height: 100vh; overflow: auto; }
+    body { height: 100%; }
+    .app { display: flex; min-height: 100vh; height: 100%; }
+    .panel-left { width: 320px; min-width: 320px; max-height: 100vh; background: #282a2e; border-right: 1px solid #30363d; overflow-y: auto; overflow-x: hidden; padding: 10px; flex-shrink: 0; }
+    .viz-right { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: auto; max-height: 100vh; }
     h1 { font-size: 1.1rem; margin: 0 0 8px 0; }
     .tabs { display: flex; gap: 4px; margin-bottom: 12px; }
     .tabs button { padding: 6px 10px; cursor: pointer; background: #3c3f44; border: 1px solid #30363d; color: #e6edf3; border-radius: 6px; font-size: 14px; }
@@ -27,13 +28,16 @@
     .btn-start:hover:not(:disabled) { background: #2ea043; }
     .btn-start:disabled { opacity: 0.7; cursor: not-allowed; }
     .btn-plan { background: #504080; color: #fff; }
-    #start-mission-status { font-size: 12px; color: #8b949e; margin-left: 8px; }
-    #start-mission-status.running { color: #58a6ff; }
-    #start-mission-status.error { color: #f85149; }
+    .btn-small { padding: 4px 10px; font-size: 12px; margin: 4px 0; background: #3d4a56; color: #e6edf3; }
+    .hint { font-size: 11px; color: #8b949e; margin: 4px 0 8px 0; }
+    #start-mission-status, #plan-aircraft-status { font-size: 12px; color: #8b949e; margin-left: 8px; }
+    #start-mission-status.running, #plan-aircraft-status.running { color: #58a6ff; }
+    #start-mission-status.error, #plan-aircraft-status.error { color: #f85149; }
     .error { color: #f85149; }
     .placeholder { color: #8b949e; font-size: 13px; padding: 1rem; }
     #map { flex: 1; min-height: 300px; border-radius: 0; }
     #spacecraft-canvas { flex: 1; min-height: 300px; width: 100%; display: block; background: #1a1d21; }
+    #aircraft-viz.panel.active, #spacecraft-viz.panel.active { min-height: 0; overflow: auto; }
     .schedule-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
     .schedule-table th, .schedule-table td { padding: 4px 8px; text-align: left; border: 1px solid #30363d; }
     .schedule-table th { background: #21262d; }
@@ -54,18 +58,35 @@
 
       <div id="aircraft-settings" class="panel active">
         <div class="section-title">Aircraft mission</div>
-        <div class="setting-line">Waypoints: <span id="waypoints-count">0</span></div>
-        <div class="waypoints-list" id="waypoints-list"></div>
-        <div class="setting-line">Altitude (m): <span id="altitude-val">100</span></div>
-        <div class="setting-line">Drone type: <span id="drone-type-val">Plane</span></div>
-        <div class="setting-line">Weight (kg): <span id="weight-val">—</span>, Size (m): <span id="size-val">—</span></div>
-        <div class="section-title">Fuel / Battery (same as Pygame)</div>
-        <div class="setting-line">Fuel capacity (J): <span id="fuel-cap-val">2e6</span></div>
-        <div class="setting-line">Fuel consumption (J/s): <span id="fuel-cons-val">80</span></div>
+        <p class="hint">One waypoint per line: lat, lon or lat, lon, alt_m</p>
+        <textarea id="aircraft-waypoints-ta" rows="5" style="width:100%;max-width:280px;font-size:12px;padding:6px;background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:4px;resize:vertical;"></textarea>
+        <div class="section-title">Default altitude (m)</div>
+        <div class="setting-line">
+          <input type="number" id="aircraft-altitude-m" min="0" max="4000" value="100" style="width:72px;">
+        </div>
+        <div class="section-title">Vehicle type</div>
+        <div class="setting-line">
+          <select id="aircraft-vehicle-type" style="padding:4px 8px;background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:4px;">
+            <option value="Plane">Plane (fuel)</option>
+            <option value="UAV">UAV / Drone (battery)</option>
+          </select>
+        </div>
+        <div class="section-title">Fuel / Battery capacity (J)</div>
+        <div class="setting-line">
+          <input type="number" id="aircraft-energy-capacity" min="1000" step="100000" value="2000000" style="width:120px;">
+        </div>
+        <div class="section-title">Consumption (J/s)</div>
+        <div class="setting-line">
+          <input type="number" id="aircraft-consumption" min="1" step="1" value="80" style="width:72px;">
+        </div>
         <div id="aircraft-crash-msg" class="crash-msg" style="display: none;"></div>
         <div id="aircraft-fail-msg" class="fail-msg" style="display: none;"></div>
-        <button type="button" id="start-mission-btn" class="btn btn-start">Start mission</button>
-        <span id="start-mission-status"></span>
+        <button type="button" id="plan-aircraft-btn" class="btn btn-start">Plan aircraft + Save</button>
+        <span id="plan-aircraft-status"></span>
+        <div style="margin-top:12px;">
+          <button type="button" id="start-mission-btn" class="btn btn-small">Start mission (from file)</button>
+          <span id="start-mission-status"></span>
+        </div>
         <div id="aircraft-metrics" style="margin-top: 10px;"></div>
       </div>
 
@@ -73,9 +94,20 @@
         <div class="section-title">7-day spacecraft mission</div>
         <div class="setting-line">Targets (from waypoints):</div>
         <div id="spacecraft-targets-list" class="waypoints-list"></div>
-        <div class="setting-line">Station: <span id="station-val">—</span></div>
-        <div class="setting-line">Orbit altitude: <span id="orbit-alt-val">400</span> km</div>
-        <button type="button" id="plan-spacecraft-btn" class="btn btn-plan" style="display: none;">Plan 7-day + Save</button>
+        <p class="hint">Drag globe to rotate. Click globe to set launch.</p>
+        <div class="section-title">Launch point (lat, lon)</div>
+        <div class="setting-line">
+          <input type="number" id="launch-lat" step="0.5" min="-90" max="90" style="width:64px;margin-right:6px;"> 
+          <input type="number" id="launch-lon" step="0.5" min="-180" max="180" style="width:64px;">
+        </div>
+        <button type="button" id="set-launch-from-start-btn" class="btn btn-small">Set from start</button>
+        <div class="section-title">Orbit altitude (km)</div>
+        <div class="setting-line">
+          <input type="number" id="orbit-alt-km" min="200" max="2000" value="400" style="width:72px;">
+        </div>
+        <div class="section-title">Weather at launch</div>
+        <div id="weather-at-launch" class="setting-line">—</div>
+        <button type="button" id="plan-spacecraft-btn" class="btn btn-plan">Plan 7-day + Save</button>
         <div id="spacecraft-metrics" style="margin-top: 10px;"></div>
         <div id="spacecraft-schedule-wrap" style="margin-top: 8px;"></div>
       </div>
@@ -87,7 +119,7 @@
         <div id="map" style="display: none; flex: 1;"></div>
       </div>
       <div id="spacecraft-viz" class="panel" style="flex: 1; display: flex; flex-direction: column;">
-        <p class="placeholder">Full Earth view: launch point and spacecraft in orbit (same as Pygame). Run Start mission for schedule.</p>
+        <p class="placeholder">Full Earth: drag to rotate, click globe to set launch. Same as Pygame.</p>
         <canvas id="spacecraft-canvas"></canvas>
       </div>
     </main>
@@ -118,32 +150,56 @@
     let replayStartTime = null;
     let replayInterval = null;
     const FLIGHT_SPEED = 40;
+    let earthRotationRad = 0;
+    let earthDragStart = null;
+    let earthImage = null;
+    const EARTH_IMAGE_URL = 'https://unpkg.com/three-globe/example/img/earth-day.jpg';
 
     async function loadSettings() {
       try {
         const r = await fetch('/api/settings');
         if (!r.ok) return;
         settings = await r.json();
-        document.getElementById('waypoints-count').textContent = (settings.aircraft.waypoints || []).length;
-        const list = document.getElementById('waypoints-list');
-        list.innerHTML = (settings.aircraft.waypoints || []).slice(0, 12).map((w, i) =>
-          (i + 1) + '. ' + w[0].toFixed(4) + ', ' + w[1].toFixed(4) + (w[2] != null ? ' @ ' + w[2] + 'm' : '')
-        ).join('<br>');
-        if ((settings.aircraft.waypoints || []).length > 12) list.innerHTML += '<br>... more';
-        document.getElementById('altitude-val').textContent = settings.aircraft.default_altitude_m ?? 100;
-        document.getElementById('fuel-cap-val').textContent = String(settings.aircraft.energy_budget ?? '2e6');
-        document.getElementById('fuel-cons-val').textContent = String(settings.aircraft.consumption_per_second ?? 80);
-        document.getElementById('drone-type-val').textContent = 'Plane';
-        document.getElementById('weight-val').textContent = '—';
-        document.getElementById('size-val').textContent = '—';
+        const wps = settings.aircraft.waypoints || [];
+        const ta = document.getElementById('aircraft-waypoints-ta');
+        if (ta) ta.value = wps.map(w => w[0] + ', ' + w[1] + (w[2] != null ? ', ' + w[2] : '')).join('\n');
+        const altEl = document.getElementById('aircraft-altitude-m');
+        if (altEl) altEl.value = settings.aircraft.default_altitude_m ?? 100;
+        const vtEl = document.getElementById('aircraft-vehicle-type');
+        if (vtEl) vtEl.value = settings.aircraft.vehicle_type || 'Plane';
+        const capEl = document.getElementById('aircraft-energy-capacity');
+        if (capEl) capEl.value = settings.aircraft.energy_budget ?? 2000000;
+        const consEl = document.getElementById('aircraft-consumption');
+        if (consEl) consEl.value = settings.aircraft.consumption_per_second ?? 80;
         const st = settings.spacecraft.station || [52, 4];
-        document.getElementById('station-val').textContent = st[0].toFixed(2) + ', ' + st[1].toFixed(2);
-        document.getElementById('orbit-alt-val').textContent = settings.spacecraft.altitude_km ?? 400;
+        const launchLatEl = document.getElementById('launch-lat');
+        const launchLonEl = document.getElementById('launch-lon');
+        const orbitAltEl = document.getElementById('orbit-alt-km');
+        if (launchLatEl) launchLatEl.value = st[0];
+        if (launchLonEl) launchLonEl.value = st[1];
+        if (orbitAltEl) orbitAltEl.value = settings.spacecraft.altitude_km ?? 400;
         const tlist = document.getElementById('spacecraft-targets-list');
         tlist.innerHTML = (settings.spacecraft.targets || []).slice(0, 4).map(t =>
           t[0].toFixed(2) + ', ' + t[1].toFixed(2)
         ).join('<br>');
+        fetchWeatherAtLaunch();
       } catch (e) {}
+    }
+
+    async function fetchWeatherAtLaunch() {
+      const latEl = document.getElementById('launch-lat');
+      const lonEl = document.getElementById('launch-lon');
+      const out = document.getElementById('weather-at-launch');
+      if (!out || !latEl || !lonEl) return;
+      const lat = parseFloat(latEl.value);
+      const lon = parseFloat(lonEl.value);
+      if (isNaN(lat) || isNaN(lon)) { out.textContent = '—'; return; }
+      try {
+        const r = await fetch('/api/weather?lat=' + lat + '&lon=' + lon);
+        if (!r.ok) { out.textContent = '—'; return; }
+        const w = await r.json();
+        out.textContent = (w.temperature != null ? w.temperature + '°C' : '—') + ', wind ' + (w.windspeed != null ? w.windspeed + ' km/h' : '—');
+      } catch (e) { out.textContent = '—'; }
     }
 
     function interpolate(route, t) {
@@ -265,6 +321,18 @@
       replayInterval = setInterval(tick, 50);
     }
 
+    function routeFromData(d) {
+      const route = d.planned_route || d.flight_path_with_timestamps || [];
+      if (route && route.length >= 2) return route;
+      const waypoints = d.waypoints_corrected_altitude || d.waypoints || [];
+      if (!waypoints.length) return route;
+      let t = 0;
+      return waypoints.map((p, i) => {
+        const lat = p[0], lon = p[1], alt = p[2] != null ? p[2] : 100;
+        return { lat, lon, alt_m: alt, t: t++, energy_used: null };
+      });
+    }
+
     async function loadAircraft() {
       const metrics = document.getElementById('aircraft-metrics');
       document.getElementById('aircraft-crash-msg').style.display = 'none';
@@ -277,7 +345,7 @@
         }
         const d = await r.json();
         aircraftData = d;
-        const route = d.planned_route || d.flight_path_with_timestamps || [];
+        const route = routeFromData(d);
         metrics.innerHTML = [
           '<div class="metric"><span>Time</span>' + (d.total_time_s != null ? d.total_time_s.toFixed(1) + ' s' : '—') + '</div>',
           '<div class="metric"><span>Energy</span>' + (d.total_energy != null ? d.total_energy.toFixed(0) : '—') + '</div>',
@@ -295,13 +363,17 @@
       try {
         const r = await fetch('/api/spacecraft');
         if (!r.ok) {
-          wrap.innerHTML = '<p class="error">No spacecraft data. Run Start mission.</p>';
+          wrap.innerHTML = '<p class="error">No spacecraft data. Plan 7-day + Save to run.</p>';
+          metrics.innerHTML = '';
           return;
         }
         const d = await r.json();
+        const cc = d.constraint_checks || {};
         metrics.innerHTML = [
           '<div class="metric"><span>Mission value</span>' + (d.mission_value != null ? d.mission_value : '—') + '</div>',
-          '<div class="metric"><span>Activities</span>' + (d.activities ? d.activities.length : 0) + '</div>'
+          '<div class="metric"><span>Slew OK</span>' + (cc.slew_feasible != null ? cc.slew_feasible : '—') + '</div>',
+          '<div class="metric"><span>Power OK</span>' + (cc.power_duty_ok != null ? cc.power_duty_ok : '—') + '</div>',
+          '<div class="metric"><span>Activities</span>' + (d.activities ? d.activities.length : 0) + ' (saved to outputs/)</div>'
         ].join('');
         if (d.activities && d.activities.length) {
           let table = '<table class="schedule-table"><thead><tr><th>Type</th><th>Start</th><th>End</th><th>Dur</th></tr></thead><tbody>';
@@ -313,7 +385,70 @@
         } else wrap.innerHTML = '';
       } catch (e) {
         wrap.innerHTML = '<p class="error">Failed to load.</p>';
+        metrics.innerHTML = '';
       }
+    }
+
+    function getSpacecraftLaunchOrbit() {
+      const latEl = document.getElementById('launch-lat');
+      const lonEl = document.getElementById('launch-lon');
+      const altEl = document.getElementById('orbit-alt-km');
+      const launchLat = (latEl && !isNaN(parseFloat(latEl.value))) ? parseFloat(latEl.value) : 52;
+      const launchLon = (lonEl && !isNaN(parseFloat(lonEl.value))) ? parseFloat(lonEl.value) : 4;
+      const altKm = (altEl && !isNaN(parseFloat(altEl.value))) ? parseFloat(altEl.value) : 400;
+      return { launchLat, launchLon, altKm };
+    }
+
+    function screenToEarthLatLon(mx, my, w, h, rotationRad) {
+      const cx = w / 2, cy = h / 2;
+      const earthR = Math.min(w, h) / 2 - 40;
+      const dx = mx - cx, dy = my - cy;
+      if (dx * dx + dy * dy > earthR * earthR) return null;
+      const latRad = Math.asin(Math.max(-1, Math.min(1, -dy / earthR)));
+      const cosLat = Math.cos(latRad);
+      if (cosLat < 1e-9) return null;
+      const lonViewRad = Math.atan2(dx, cosLat * earthR);
+      let lonDeg = (lonViewRad + rotationRad) * 180 / Math.PI;
+      if (lonDeg > 180) lonDeg -= 360;
+      if (lonDeg < -180) lonDeg += 360;
+      return { lat: latRad * 180 / Math.PI, lon: lonDeg };
+    }
+
+    const earthCache = {};
+    function drawEarthCircle(ctx, cx, cy, earthR, rotationRad, imgCanvas) {
+      const key = Math.round(rotationRad * 100) % 628;
+      if (earthCache[key] && earthCache[key].width === earthR * 2) {
+        ctx.drawImage(earthCache[key], cx - earthR, cy - earthR);
+        return;
+      }
+      const off = document.createElement('canvas');
+      off.width = earthR * 2;
+      off.height = earthR * 2;
+      const octx = off.getContext('2d');
+      const tw = imgCanvas.width, th = imgCanvas.height;
+      const imgData = octx.createImageData(off.width, off.height);
+      const src = imgCanvas.getContext('2d').getImageData(0, 0, tw, th);
+      for (let dy = -earthR; dy <= earthR; dy++) {
+        for (let dx = -earthR; dx <= earthR; dx++) {
+          if (dx * dx + dy * dy > earthR * earthR) continue;
+          const lat = Math.asin(Math.max(-1, Math.min(1, dy / earthR)));
+          const cosLat = Math.cos(lat);
+          const lon = cosLat < 1e-6 ? 0 : Math.atan2(dx, cosLat * earthR);
+          const u = ((lon + rotationRad) / (2 * Math.PI) + 0.5) % 1;
+          const v = 0.5 - lat / Math.PI;
+          const tx = Math.min(tw - 1, Math.floor(u * tw));
+          const ty = Math.max(0, Math.min(th - 1, Math.floor(v * th)));
+          const i = (ty * tw + tx) * 4;
+          const o = ((dy + earthR) * off.width + (dx + earthR)) * 4;
+          imgData.data[o] = src.data[i];
+          imgData.data[o+1] = src.data[i+1];
+          imgData.data[o+2] = src.data[i+2];
+          imgData.data[o+3] = 255;
+        }
+      }
+      octx.putImageData(imgData, 0, 0);
+      earthCache[key] = off;
+      ctx.drawImage(off, cx - earthR, cy - earthR);
     }
 
     function drawSpacecraftView() {
@@ -326,23 +461,40 @@
       const ctx = canvas.getContext('2d');
       const cx = w / 2, cy = h / 2;
       const earthR = Math.min(w, h) / 2 - 40;
-      const launchLat = (settings && settings.spacecraft && settings.spacecraft.station) ? settings.spacecraft.station[0] : 52;
-      const launchLon = (settings && settings.spacecraft && settings.spacecraft.station) ? settings.spacecraft.station[1] : 4;
-      const altKm = (settings && settings.spacecraft && settings.spacecraft.altitude_km) ? settings.spacecraft.altitude_km : 400;
+      const { launchLat, launchLon, altKm } = getSpacecraftLaunchOrbit();
       const EARTH_R_KM = 6371;
-      const orbitR = earthR * (EARTH_R_KM + altKm) / EARTH_R_KM;
+      const orbitR = Math.min(earthR * (EARTH_R_KM + altKm) / EARTH_R_KM, Math.min(w, h) / 2 - 10);
 
       ctx.fillStyle = '#1a1d21';
       ctx.fillRect(0, 0, w, h);
-      ctx.fillStyle = 'rgb(30, 60, 120)';
-      ctx.beginPath();
-      ctx.arc(cx, cy, earthR, 0, Math.PI * 2);
-      ctx.fill();
+
+      if (earthImage && earthImage.complete && earthImage.naturalWidth && earthImage.naturalHeight) {
+        try {
+          const imgCan = document.createElement('canvas');
+          imgCan.width = earthImage.naturalWidth;
+          imgCan.height = earthImage.naturalHeight;
+          imgCan.getContext('2d').drawImage(earthImage, 0, 0);
+          drawEarthCircle(ctx, cx, cy, earthR, earthRotationRad, imgCan);
+        } catch (err) {
+          ctx.fillStyle = 'rgb(30, 60, 120)';
+          ctx.beginPath();
+          ctx.arc(cx, cy, earthR, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      } else {
+        ctx.fillStyle = 'rgb(30, 60, 120)';
+        ctx.beginPath();
+        ctx.arc(cx, cy, earthR, 0, Math.PI * 2);
+        ctx.fill();
+      }
       ctx.strokeStyle = 'rgb(80, 120, 180)';
       ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, earthR, 0, Math.PI * 2);
       ctx.stroke();
 
-      const latRad = launchLat * Math.PI / 180, lonRad = launchLon * Math.PI / 180;
+      const latRad = launchLat * Math.PI / 180;
+      const lonRad = launchLon * Math.PI / 180 - earthRotationRad;
       const lx = cx + earthR * Math.cos(latRad) * Math.sin(lonRad);
       const ly = cy - earthR * Math.sin(latRad);
       ctx.fillStyle = '#ffc800';
@@ -358,13 +510,13 @@
       ctx.strokeStyle = 'rgb(100, 100, 140)';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.arc(cx, cy, Math.min(orbitR, Math.min(w, h) / 2 - 10), 0, Math.PI * 2);
+      ctx.arc(cx, cy, orbitR, 0, Math.PI * 2);
       ctx.stroke();
 
       const period = 2 * Math.PI * Math.sqrt(Math.pow(EARTH_R_KM + altKm, 3) / 398600.44);
-      const angle = 2 * Math.PI * (Date.now() / 1000 % period) / period;
-      const sx = cx + Math.min(orbitR, Math.min(w, h) / 2 - 10) * Math.cos(angle);
-      const sy = cy - Math.min(orbitR, Math.min(w, h) / 2 - 10) * Math.sin(angle);
+      const angle = 2 * Math.PI * (Date.now() / 1000 % period) / period + earthRotationRad;
+      const sx = cx + orbitR * Math.cos(angle);
+      const sy = cy - orbitR * Math.sin(angle);
       ctx.fillStyle = 'rgb(200, 220, 255)';
       ctx.beginPath();
       ctx.arc(sx, sy, 6, 0, Math.PI * 2);
@@ -375,10 +527,139 @@
       ctx.fillText('Spacecraft', sx - 24, sy - 10);
     }
 
+    (function() {
+      earthImage = new Image();
+      earthImage.crossOrigin = 'anonymous';
+      earthImage.src = EARTH_IMAGE_URL;
+    })();
+
+    let spacecraftCanvasDragStart = null;
+    const canvas = document.getElementById('spacecraft-canvas');
+    if (canvas) {
+      canvas.addEventListener('mousedown', function(e) {
+        if (!document.getElementById('spacecraft-viz').classList.contains('active')) return;
+        spacecraftCanvasDragStart = { x: e.offsetX, y: e.offsetY };
+      });
+      canvas.addEventListener('mousemove', function(e) {
+        if (!spacecraftCanvasDragStart) return;
+        const dx = e.offsetX - spacecraftCanvasDragStart.x;
+        earthRotationRad += dx * 0.008;
+        spacecraftCanvasDragStart = { x: e.offsetX, y: e.offsetY };
+      });
+      canvas.addEventListener('mouseup', function(e) {
+        if (!spacecraftCanvasDragStart) return;
+        const dx = e.offsetX - spacecraftCanvasDragStart.x;
+        const dy = e.offsetY - spacecraftCanvasDragStart.y;
+        if (dx * dx + dy * dy < 16) {
+          const rect = canvas.getBoundingClientRect();
+          const w = canvas.clientWidth, h = canvas.clientHeight;
+          const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+          const pt = screenToEarthLatLon(mx, my, w, h, earthRotationRad);
+          if (pt) {
+            const latEl = document.getElementById('launch-lat');
+            const lonEl = document.getElementById('launch-lon');
+            if (latEl) latEl.value = pt.lat.toFixed(2);
+            if (lonEl) lonEl.value = pt.lon.toFixed(2);
+            fetchWeatherAtLaunch();
+          }
+        }
+        spacecraftCanvasDragStart = null;
+      });
+      canvas.addEventListener('mouseleave', function() { spacecraftCanvasDragStart = null; });
+    }
+
+    document.getElementById('set-launch-from-start-btn').addEventListener('click', function() {
+      if (!settings || !settings.aircraft || !settings.aircraft.waypoints || !settings.aircraft.waypoints.length) return;
+      const wp = settings.aircraft.waypoints[0];
+      const latEl = document.getElementById('launch-lat');
+      const lonEl = document.getElementById('launch-lon');
+      if (latEl) latEl.value = wp[0];
+      if (lonEl) lonEl.value = wp[1];
+      fetchWeatherAtLaunch();
+    });
+
+    const launchLatEl = document.getElementById('launch-lat');
+    const launchLonEl = document.getElementById('launch-lon');
+    if (launchLatEl) launchLatEl.addEventListener('change', fetchWeatherAtLaunch);
+    if (launchLonEl) launchLonEl.addEventListener('change', fetchWeatherAtLaunch);
+
+    document.getElementById('plan-spacecraft-btn').addEventListener('click', async function() {
+      const btn = this;
+      const { launchLat, launchLon, altKm } = getSpacecraftLaunchOrbit();
+      const tlist = (settings && settings.spacecraft && settings.spacecraft.targets) ? settings.spacecraft.targets : [[52.5, 4.5, 1], [53, 5, 1]];
+      btn.disabled = true;
+      try {
+        const r = await fetch('/api/plan_spacecraft', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ station: [launchLat, launchLon], altitude_km: altKm, targets: tlist })
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          alert('Error: ' + (data.error || r.statusText));
+          return;
+        }
+        await loadSpacecraft();
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    document.getElementById('plan-aircraft-btn').addEventListener('click', async function() {
+      const btn = this, status = document.getElementById('plan-aircraft-status');
+      const ta = document.getElementById('aircraft-waypoints-ta');
+      const lines = (ta && ta.value || '').trim().split('\n').map(s => s.trim()).filter(Boolean);
+      const waypoints = [];
+      for (const line of lines) {
+        const parts = line.split(',').map(p => p.trim());
+        if (parts.length >= 2) {
+          const lat = parseFloat(parts[0]), lon = parseFloat(parts[1]);
+          if (!isNaN(lat) && !isNaN(lon))
+            waypoints.push(parts.length >= 3 ? [lat, lon, parseFloat(parts[2]) || undefined] : [lat, lon]);
+        }
+      }
+      if (waypoints.length < 2) {
+        status.textContent = 'Add at least 2 waypoints (lat, lon or lat, lon, alt per line).';
+        status.className = 'error';
+        return;
+      }
+      btn.disabled = true;
+      status.textContent = 'Planning…';
+      status.className = 'running';
+      status.classList.remove('error');
+      try {
+        const defaultAlt = parseFloat(document.getElementById('aircraft-altitude-m').value) || 100;
+        const vehicleType = (document.getElementById('aircraft-vehicle-type') && document.getElementById('aircraft-vehicle-type').value) || 'Plane';
+        const energyCap = parseFloat(document.getElementById('aircraft-energy-capacity').value) || 2e6;
+        const consumption = parseFloat(document.getElementById('aircraft-consumption').value) || 80;
+        const payload = {
+          waypoints: waypoints.map(w => w.length >= 3 ? [w[0], w[1], w[2]] : [w[0], w[1], defaultAlt]),
+          default_altitude_m: defaultAlt,
+          vehicle_type: vehicleType,
+          energy_budget: energyCap,
+          consumption_per_second: consumption
+        };
+        const r = await fetch('/api/plan_aircraft', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          status.textContent = 'Error: ' + (data.error || r.statusText);
+          status.className = 'error';
+          return;
+        }
+        status.textContent = 'Saved.';
+        await loadAircraft();
+      } catch (e) {
+        status.textContent = 'Error: ' + e.message;
+        status.className = 'error';
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
     document.getElementById('start-mission-btn').addEventListener('click', async function() {
       const btn = this, status = document.getElementById('start-mission-status');
       btn.disabled = true;
-      status.textContent = 'Running mission…';
+      status.textContent = 'Running…';
       status.className = 'running';
       status.classList.remove('error');
       try {

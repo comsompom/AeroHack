@@ -58,12 +58,27 @@ def test_simulate_path():
     model = AircraftModel(cruise_speed_ms=25.0)
     waypoints = [(52.0, 4.0), (52.05, 4.0), (52.1, 4.05)]
     initial = AircraftState(52.0, 4.0, 0.0, 0.0, 0.0)
-    states, total_time, total_energy = model.simulate_path(waypoints, initial, model.wind_nominal)
+    states, total_time, total_energy, crash = model.simulate_path(waypoints, initial, model.wind_nominal)
     assert len(states) == 3
     assert states[0].lat == 52.0
     assert states[-1].lat == 52.1
     assert total_time > 0
     assert total_energy > 0
+    assert crash is None
+
+
+def test_simulate_path_depletion():
+    # Very small energy budget so we deplete on first segment
+    model = AircraftModel(cruise_speed_ms=25.0, energy_budget=10.0, consumption_per_second=1000.0)
+    waypoints = [(52.0, 4.0), (52.1, 4.0), (52.2, 4.0)]
+    initial = AircraftState(52.0, 4.0, 0.0, 0.0, 0.0)
+    states, total_time, total_energy, crash = model.simulate_path(waypoints, initial, model.wind_nominal)
+    assert len(states) == 3
+    assert crash is not None
+    assert crash["depleted"] is True
+    assert "crash_lat" in crash and "crash_lon" in crash
+    assert crash["segment_from_waypoint_index"] == 0
+    assert crash["segment_to_waypoint_index"] == 1
 
 
 def test_waypoint_altitude_with_alt():

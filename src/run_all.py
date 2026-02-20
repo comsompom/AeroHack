@@ -17,6 +17,9 @@ from src.mission_settings import (
     AIRCRAFT_CRUISE_SPEED_MS,
     AIRCRAFT_MAX_TURN_RATE_DEGS,
     AIRCRAFT_ENERGY_BUDGET,
+    AIRCRAFT_VEHICLE_TYPE,
+    AIRCRAFT_FUEL_TANK_CAPACITY_J,
+    AIRCRAFT_BATTERY_CAPACITY_J,
     AIRCRAFT_CONSUMPTION_PER_SECOND,
     AIRCRAFT_MIN_ALTITUDE_M,
     AIRCRAFT_MAX_ALTITUDE_M,
@@ -46,10 +49,16 @@ def run_aircraft():
     from src.aircraft.constraints import EnduranceConstraint, ManeuverConstraint, GeofenceConstraint, AltitudeConstraint
 
     waypoints = list(AIRCRAFT_WAYPOINTS)
+    # Use fuel tank capacity for planes, battery capacity for drones (UAV)
+    is_plane = (AIRCRAFT_VEHICLE_TYPE or "Plane").strip().lower() in ("plane", "fixed-wing")
+    energy_budget = AIRCRAFT_FUEL_TANK_CAPACITY_J if is_plane else AIRCRAFT_BATTERY_CAPACITY_J
+    if energy_budget is None or energy_budget <= 0:
+        energy_budget = AIRCRAFT_ENERGY_BUDGET
+
     model = AircraftModel(
         cruise_speed_ms=AIRCRAFT_CRUISE_SPEED_MS,
         max_turn_rate_degs=AIRCRAFT_MAX_TURN_RATE_DEGS,
-        energy_budget=AIRCRAFT_ENERGY_BUDGET,
+        energy_budget=energy_budget,
         consumption_per_second=AIRCRAFT_CONSUMPTION_PER_SECOND,
         min_altitude_m=AIRCRAFT_MIN_ALTITUDE_M,
         max_altitude_m=AIRCRAFT_MAX_ALTITUDE_M,
@@ -57,6 +66,7 @@ def run_aircraft():
     )
     plan = plan_aircraft_mission(waypoints, model)
     states, total_time, total_energy, checks = simulate_mission(plan)
+    crash_depletion = checks.get("crash_depletion")
     mc = monte_carlo_mission(plan, num_seeds=MONTE_CARLO_NUM_SEEDS, seed=MONTE_CARLO_SEED)
 
     no_fly_zones = list(AIRCRAFT_NO_FLY_ZONES)
@@ -72,29 +82,54 @@ def run_aircraft():
         "altitude_within_envelope": altitude_ok,
     }
 
-    # Ordered plan with timing, altitude, and energy_used (for web/Pygame crash/fail viz)
+    # Ordered plan with timing, altitude, energy_used, and remaining energy (battery/fuel level)
     wp_alt = plan.get("waypoints_with_altitude") or [
         (p[0], p[1], model.default_altitude_m) for p in plan["waypoints"]
     ]
     states = plan.get("states") or []
     planned_route = []
+    energy_remaining_at_waypoints = []
     for i, p in enumerate(wp_alt):
+        e_used = getattr(states[i], "energy_used", None) if i < len(states) else None
         entry = {"lat": p[0], "lon": p[1], "alt_m": p[2], "t": plan["timestamps"][i]}
-        if i < len(states):
-            entry["energy_used"] = getattr(states[i], "energy_used", None)
+        if e_used is not None:
+            entry["energy_used"] = e_used
+            energy_remaining_at_waypoints.append(model.energy_budget - e_used)
         planned_route.append(entry)
+
+    # Crash depletion: where and why (no fuel / no battery)
+    crash_depletion_out = None
+    if crash_depletion:
+        alt_at_crash = wp_alt[crash_depletion["segment_from_waypoint_index"]][2] if crash_depletion["segment_from_waypoint_index"] < len(wp_alt) else model.default_altitude_m
+        crash_depletion_out = {
+            "occurred": True,
+            "reason": "no_fuel" if is_plane else "no_battery",
+            "at_position": {
+                "lat": crash_depletion["crash_lat"],
+                "lon": crash_depletion["crash_lon"],
+                "alt_m": alt_at_crash,
+            },
+            "at_time_s": crash_depletion["crash_t_s"],
+            "segment_from_waypoint_index": crash_depletion["segment_from_waypoint_index"],
+            "segment_to_waypoint_index": crash_depletion["segment_to_waypoint_index"],
+            "energy_used_at_depletion": crash_depletion["energy_used_at_depletion"],
+        }
 
     out = {
         "module": "Aircraft (UAV / fixed-wing)",
+        "vehicle_type": AIRCRAFT_VEHICLE_TYPE,
         "objective": "minimize_time",
         "model_description": (
             "Point-mass kinematics; turn rate limit (deg/s) and bank equivalent; "
-            "energy consumption model (per-second + turn penalty)."
+            "energy consumption model (per-second + turn penalty). "
+            "Planes use fuel tank capacity; drones (UAV) use battery capacity."
         ),
         "model_parameters": {
             "cruise_speed_ms": model.cruise_speed_ms,
             "max_turn_rate_degs": model.max_turn_rate_degs,
             "energy_budget": model.energy_budget,
+            "fuel_tank_capacity_J": energy_budget if is_plane else None,
+            "battery_capacity_J": energy_budget if not is_plane else None,
             "consumption_per_second": model.consumption_per_second,
             "min_altitude_m": model.min_altitude_m,
             "max_altitude_m": model.max_altitude_m,
@@ -116,6 +151,8 @@ def run_aircraft():
         "waypoints_corrected_altitude": wp_alt,
         "planned_route": planned_route,
         "flight_path_with_timestamps": planned_route,
+        "energy_remaining_at_waypoints": energy_remaining_at_waypoints,
+        "crash_depletion": crash_depletion_out,
         "total_time_s": plan["total_time"],
         "total_energy": plan["total_energy"],
         "performance_metrics": {

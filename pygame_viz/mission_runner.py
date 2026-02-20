@@ -44,7 +44,7 @@ def run_mission(waypoints: list, drone_params: dict, use_user_order: bool = Fals
             waypoints_2d = [(p[0], p[1]) for p in waypoints_3d]
             from src.aircraft.model import AircraftState
             initial = AircraftState(waypoints_2d[0][0], waypoints_2d[0][1], 0.0, 0.0, 0.0)
-            states, total_time, total_energy = model.simulate_path(
+            states, total_time, total_energy, _ = model.simulate_path(
                 waypoints_2d, initial, model.wind_nominal
             )
             timestamps = [float(s.t) for s in states]

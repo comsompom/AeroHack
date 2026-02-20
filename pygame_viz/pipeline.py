@@ -160,6 +160,7 @@ def run_spacecraft_to_outputs(
     station: tuple = (52.0, 4.0),
     schedule_days: int = 7,
     save: bool = True,
+    altitude_km: float = 400.0,
 ) -> dict | None:
     """
     Plan 7-day spacecraft mission; optionally save to outputs/ (JSON + CSV).
@@ -172,7 +173,7 @@ def run_spacecraft_to_outputs(
         return None
 
     result = plan_spacecraft_mission(
-        altitude_km=400.0,
+        altitude_km=altitude_km,
         targets=targets if targets else [(52.5, 4.5, 1.0), (53.0, 5.0, 1.0)],
         station=station,
         schedule_days=schedule_days,
