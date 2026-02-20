@@ -89,4 +89,10 @@ Then open **http://127.0.0.1:5000** in a browser. The app reads from `outputs/` 
 ## Requirements
 
 - Python 3.8+
-- See `requirements.txt` (numpy, pytest, pytest-cov, flask)
+- See `requirements.txt` (numpy, matplotlib, pytest, pytest-cov, flask)
+
+## Expected runtime and hardware
+
+- **Full pipeline** (`python -m src.run_all`): typically 5–30 seconds depending on machine (aircraft planning + simulation + Monte-Carlo, then spacecraft 7-day schedule).
+- **Unit tests** (`pytest tests/ -v`): under 1 second.
+- **Hardware:** No GPU required. Standard CPU and a few hundred MB RAM are sufficient. The web app runs in the browser; no special hardware for visualization.

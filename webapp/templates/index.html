@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DroneMission — Mission Visualization</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <style>
     * { box-sizing: border-box; }
     body { font-family: system-ui, sans-serif; margin: 0; padding: 1rem; background: #0f1419; color: #e6edf3; }
@@ -17,6 +19,10 @@
     .metric { padding: 0.5rem; background: #21262d; border-radius: 6px; }
     .metric span { display: block; font-size: 0.75rem; color: #8b949e; }
     .metric strong { font-size: 1.1rem; }
+    #map { height: 360px; width: 100%; border-radius: 6px; margin-top: 0.5rem; }
+    .schedule-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    .schedule-table th, .schedule-table td { padding: 0.4rem 0.6rem; text-align: left; border: 1px solid #30363d; }
+    .schedule-table th { background: #21262d; }
     pre { overflow: auto; font-size: 0.85rem; padding: 1rem; background: #0d1117; border-radius: 6px; }
     .error { color: #f85149; }
   </style>
@@ -33,7 +39,9 @@
   <div id="aircraft" class="panel active">
     <h2>Aircraft mission</h2>
     <div id="aircraft-metrics" class="metrics"></div>
-    <div id="aircraft-route"></div>
+    <div id="aircraft-route">
+      <div id="map"></div>
+    </div>
   </div>
 
   <div id="spacecraft" class="panel">
@@ -70,7 +78,18 @@
           '<div class="metric"><span>Total energy</span><strong>' + (d.total_energy != null ? d.total_energy.toFixed(0) : '—') + '</strong></div>',
           '<div class="metric"><span>Monte-Carlo success</span><strong>' + (d.monte_carlo && d.monte_carlo.success_rate != null ? (d.monte_carlo.success_rate * 100).toFixed(0) + '%' : '—') + '</strong></div>'
         ].join('');
-        el.innerHTML = '<pre>' + JSON.stringify(d.planned_route || d.waypoints || [], null, 2) + '</pre>';
+        const route = d.planned_route || d.waypoints || [];
+        if (route.length && typeof L !== 'undefined') {
+          el.innerHTML = '<div id="map"></div>';
+          const map = L.map('map').setView([route[0].lat || route[0][0], route[0].lon || route[0][1]], 10);
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(map);
+          const pts = route.map(p => [p.lat ?? p[0], p.lon ?? p[1]]);
+          L.polyline(pts, { color: '#238636', weight: 3 }).addTo(map);
+          route.forEach((p, i) => L.marker([p.lat ?? p[0], p.lon ?? p[1]]).addTo(map).bindPopup('WP' + (i + 1) + ' t=' + (p.t != null ? p.t.toFixed(0) : '') + 's'));
+          map.fitBounds(pts);
+        } else {
+          el.innerHTML = '<pre>' + JSON.stringify(route, null, 2) + '</pre>';
+        }
       } catch (e) {
         el.innerHTML = '<p class="error">Failed to load aircraft data.</p>';
       }
@@ -91,7 +110,18 @@
           '<div class="metric"><span>Schedule days</span><strong>' + (d.schedule_days != null ? d.schedule_days : '—') + '</strong></div>',
           '<div class="metric"><span>Activities</span><strong>' + (d.activities ? d.activities.length : 0) + '</strong></div>'
         ].join('');
-        el.innerHTML = '<pre>' + JSON.stringify(d.activities || [], null, 2) + '</pre>';
+        const acts = d.activities || [];
+        if (acts.length) {
+          let table = '<table class="schedule-table"><thead><tr><th>Type</th><th>Start (s)</th><th>End (s)</th><th>Duration (s)</th><th>Target</th></tr></thead><tbody>';
+          acts.forEach(a => {
+            const dur = (a.end_t - a.start_t).toFixed(0);
+            table += '<tr><td>' + (a.type || '') + '</td><td>' + a.start_t + '</td><td>' + a.end_t + '</td><td>' + dur + '</td><td>' + (a.target_idx != null ? a.target_idx : '—') + '</td></tr>';
+          });
+          table += '</tbody></table>';
+          el.innerHTML = table;
+        } else {
+          el.innerHTML = '<p>No activities in schedule.</p>';
+        }
       } catch (e) {
         el.innerHTML = '<p class="error">Failed to load spacecraft data.</p>';
       }

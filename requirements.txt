@@ -3,6 +3,7 @@
 
 # Core / planning
 numpy>=1.20
+matplotlib>=3.5
 
 # Testing
 pytest>=7.0
